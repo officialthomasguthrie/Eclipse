@@ -55,7 +55,23 @@ jobs:
         # ubuntu blocks unprivileged userns via apparmor, systemd-repart needs them inside the sandbox
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build
-        run: nix build .#image -L --print-build-logs
+        id: build
+        run: nix build .#image -L --print-build-logs --keep-failed || echo "failed=1" >> "$GITHUB_OUTPUT"
+      - name: Diagnose
+        if: steps.build.outputs.failed == '1'
+        run: |
+          drv=$(nix eval --raw .#nixosConfigurations.eclipse.config.system.build.intermediateImage.drvPath)
+          echo "::group::nix log of $drv"
+          nix log "$drv" | tail -n 80 || true
+          echo "::endgroup::"
+          echo "::group::kept build dirs"
+          sudo find /nix/var/nix/builds /tmp -maxdepth 1 -type d -name 'nix-*' 2>/dev/null | while read -r d; do
+            echo "== $d"; sudo ls -la "$d" | head -n 40
+          done
+          echo "::endgroup::"
+      - name: Retry without the sandbox
+        if: steps.build.outputs.failed == '1'
+        run: nix build .#image -L --print-build-logs --option sandbox false
       - name: Compress
         run: |
           sudo apt-get install -y zstd >/dev/null
