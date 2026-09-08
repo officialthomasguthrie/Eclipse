@@ -1,0 +1,116 @@
+# models Aura can use. weights never go in git.
+# shipped = true means it gets copied to the models subvolume when flashing, the rest download on demand.
+# empty sha256 means unpinned; tools/pin-models.sh prints the hashes. permissive licenses only.
+
+schema = 1
+
+# chat, tiered by host memory. syzygy picks, user can override
+
+[[chat]]
+id = "qwen3-1.7b-q4_k_m"
+family = "qwen3"
+parameters = "1.7B"
+quant = "Q4_K_M"
+file = "Qwen3-1.7B-Q4_K_M.gguf"
+url = "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
+sha256 = ""
+size_gb = 1.1
+license = "Apache-2.0"
+shipped = true
+tier = { min_ram_gb = 4, min_vram_gb = 0 }
+
+[[chat]]
+id = "qwen3-4b-q4_k_m"
+family = "qwen3"
+parameters = "4B"
+quant = "Q4_K_M"
+file = "Qwen3-4B-Q4_K_M.gguf"
+url = "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf"
+sha256 = ""
+size_gb = 2.5
+license = "Apache-2.0"
+shipped = true
+default = true
+tier = { min_ram_gb = 8, min_vram_gb = 0 }
+
+[[chat]]
+id = "qwen3-8b-q4_k_m"
+family = "qwen3"
+parameters = "8B"
+quant = "Q4_K_M"
+file = "Qwen3-8B-Q4_K_M.gguf"
+url = "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf"
+sha256 = ""
+size_gb = 5.0
+license = "Apache-2.0"
+shipped = false
+tier = { min_ram_gb = 16, min_vram_gb = 0 }
+
+[[chat]]
+id = "qwen3-30b-a3b-q4_k_m"
+family = "qwen3"
+parameters = "30B-A3B"
+quant = "Q4_K_M"
+file = "Qwen3-30B-A3B-Q4_K_M.gguf"
+url = "https://huggingface.co/Qwen/Qwen3-30B-A3B-GGUF/resolve/main/Qwen3-30B-A3B-Q4_K_M.gguf"
+sha256 = ""
+size_gb = 18.0
+license = "Apache-2.0"
+shipped = false
+tier = { min_ram_gb = 32, min_vram_gb = 12 }
+
+[[chat]]
+id = "qwen3-32b-q4_k_m"
+family = "qwen3"
+parameters = "32B"
+quant = "Q4_K_M"
+file = "Qwen3-32B-Q4_K_M.gguf"
+url = "https://huggingface.co/Qwen/Qwen3-32B-GGUF/resolve/main/Qwen3-32B-Q4_K_M.gguf"
+sha256 = ""
+size_gb = 20.0
+license = "Apache-2.0"
+shipped = false
+tier = { min_ram_gb = 48, min_vram_gb = 24 }
+
+# embeddings for search by meaning
+
+[[embedding]]
+id = "nomic-embed-text-v1.5-q8"
+file = "nomic-embed-text-v1.5.Q8_0.gguf"
+url = "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf"
+sha256 = ""
+size_gb = 0.15
+license = "Apache-2.0"
+shipped = true
+
+# speech to text
+
+[[speech]]
+id = "whisper-base"
+file = "ggml-base.bin"
+url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+sha256 = ""
+size_gb = 0.15
+license = "MIT"
+shipped = true
+
+[[speech]]
+id = "whisper-large-v3-turbo"
+file = "ggml-large-v3-turbo.bin"
+url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+sha256 = ""
+size_gb = 1.6
+license = "MIT"
+shipped = false
+
+# text to speech
+
+[[tts]]
+id = "piper-en-us-lessac-medium"
+file = "en_US-lessac-medium.onnx"
+url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx"
+config_url = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"
+sha256 = ""
+size_gb = 0.06
+license = "MIT"
+shipped = true

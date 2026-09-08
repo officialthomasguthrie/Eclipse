@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  nix:
+    name: Nix flake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - run: nix flake check -L
+
+  image:
+    # github runners build the image until there is a real builder. artifact on the run.
+    name: Bootable image
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' }}
+    timeout-minutes: 120
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - name: Build
+        run: nix build .#image -L --print-build-logs
+      - name: Compress
+        run: |
+          sudo apt-get install -y zstd >/dev/null
+          img=$(ls result/*.raw | head -n1)
+          zstd -T0 -12 "$img" -o eclipse.raw.zst
+          ls -la result/ eclipse.raw.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eclipse-image-${{ github.sha }}
+          path: eclipse.raw.zst
+          retention-days: 14

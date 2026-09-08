@@ -1,0 +1,12 @@
+[package]
+name = "libeclipse"
+description = "Shared definitions for every Eclipse component: names, D-Bus addresses, paths"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true

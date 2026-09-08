@@ -1,0 +1,19 @@
+[package]
+name = "eclipse-cli"
+description = "eclipse: the one command-line tool for Eclipse OS"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "eclipse"
+path = "src/main.rs"
+
+[dependencies]
+libeclipse.workspace = true
+
+[lints]
+workspace = true

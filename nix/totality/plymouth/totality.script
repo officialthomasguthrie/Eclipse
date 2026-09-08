@@ -1,0 +1,68 @@
+# the boot progress is an eclipse. pngs come from tools/gen-totality-assets.py
+
+Window.SetBackgroundTopColor(0.047, 0.039, 0.067);
+Window.SetBackgroundBottomColor(0.047, 0.039, 0.067);
+
+sun.image = Image("sun.png");
+moon.image = Image("moon.png");
+corona.image = Image("corona.png");
+
+cx = Window.GetWidth() / 2;
+cy = Window.GetHeight() / 2;
+
+corona.sprite = Sprite(corona.image);
+corona.sprite.SetPosition(cx - corona.image.GetWidth() / 2, cy - corona.image.GetHeight() / 2, 0);
+corona.sprite.SetOpacity(0);
+
+sun.sprite = Sprite(sun.image);
+sun.sprite.SetPosition(cx - sun.image.GetWidth() / 2, cy - sun.image.GetHeight() / 2, 1);
+
+moon.sprite = Sprite(moon.image);
+
+# how far the moon travels between first contact and totality
+travel = sun.image.GetWidth() * 1.25;
+
+fun place_moon(p) {
+  x = cx - moon.image.GetWidth() / 2 + travel * (1 - p);
+  y = cy - moon.image.GetHeight() / 2 - 6 * (1 - p);
+  moon.sprite.SetPosition(x, y, 2);
+  glow = (p - 0.85) / 0.15;
+  if (glow < 0) glow = 0;
+  if (glow > 1) glow = 1;
+  corona.sprite.SetOpacity(glow);
+}
+
+place_moon(0);
+
+fun boot_progress_cb(duration, p) {
+  place_moon(p);
+}
+Plymouth.SetBootProgressFunction(boot_progress_cb);
+
+# luks prompt under the sun
+prompt.sprite = Sprite();
+bullets.sprite = Sprite();
+
+fun display_password_cb(prompt_text, bullet_count) {
+  label = Image.Text("Unlock Eclipse", 0.92, 0.90, 0.86);
+  prompt.sprite.SetImage(label);
+  prompt.sprite.SetPosition(cx - label.GetWidth() / 2, cy + sun.image.GetHeight() / 2 + 48, 5);
+  dots = "";
+  for (i = 0; i < bullet_count; i++)
+    dots += "•";
+  bullet_image = Image.Text(dots, 0.89, 0.73, 0.43);
+  bullets.sprite.SetImage(bullet_image);
+  bullets.sprite.SetPosition(cx - bullet_image.GetWidth() / 2, cy + sun.image.GetHeight() / 2 + 80, 5);
+}
+Plymouth.SetDisplayPasswordFunction(display_password_cb);
+
+fun display_normal_cb() {
+  prompt.sprite.SetOpacity(0);
+  bullets.sprite.SetOpacity(0);
+}
+Plymouth.SetDisplayNormalFunction(display_normal_cb);
+
+fun quit_cb() {
+  place_moon(1);
+}
+Plymouth.SetQuitFunction(quit_cb);

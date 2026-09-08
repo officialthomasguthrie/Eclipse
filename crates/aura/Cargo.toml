@@ -1,0 +1,19 @@
+[package]
+name = "aura"
+description = "Aura: the local AI service daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "aurad"
+path = "src/main.rs"
+
+[dependencies]
+libeclipse.workspace = true
+
+[lints]
+workspace = true

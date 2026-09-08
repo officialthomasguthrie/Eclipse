@@ -1,0 +1,19 @@
+[package]
+name = "vault"
+description = "Vault: Timeline snapshots, encrypted backups, and drive cloning"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "vault"
+path = "src/main.rs"
+
+[dependencies]
+libeclipse.workspace = true
+
+[lints]
+workspace = true

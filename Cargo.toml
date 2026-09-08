@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/libeclipse",
+  "crates/aura",
+  "crates/corona",
+  "crates/syzygy",
+  "crates/penumbra",
+  "crates/vault",
+  "crates/eclipse-cli",
+  "crates/eclipse-flash",
+  "crates/totality-splash",
+]
+# umbra gets added once the niri fork is in, see crates/umbra/README.md
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/officialthomasguthrie/Eclipse"
+authors = ["Thomas Guthrie"]
+
+[workspace.dependencies]
+libeclipse = { path = "crates/libeclipse" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
