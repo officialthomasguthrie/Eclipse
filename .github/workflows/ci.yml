@@ -51,6 +51,9 @@ jobs:
           swap-storage: true
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/determinate-nix-action@v3
+      - name: Allow user namespaces
+        # ubuntu blocks unprivileged userns via apparmor, systemd-repart needs them inside the sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build
         run: nix build .#image -L --print-build-logs
       - name: Compress
