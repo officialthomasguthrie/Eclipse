@@ -56,9 +56,9 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build
         id: build
-        run: nix build .#image -L --print-build-logs --keep-failed || echo "failed=1" >> "$GITHUB_OUTPUT"
+        run: nix build .#image -L --print-build-logs --keep-failed || { echo "failed=1" >> "$GITHUB_OUTPUT"; exit 1; }
       - name: Diagnose
-        if: steps.build.outputs.failed == '1'
+        if: failure() && steps.build.outputs.failed == '1'
         run: |
           drv=$(nix eval --raw .#nixosConfigurations.eclipse.config.system.build.intermediateImage.drvPath)
           echo "::group::nix log of $drv"
@@ -69,9 +69,6 @@ jobs:
             echo "== $d"; sudo ls -la "$d" | head -n 40
           done
           echo "::endgroup::"
-      - name: Retry without the sandbox
-        if: steps.build.outputs.failed == '1'
-        run: nix build .#image -L --print-build-logs --option sandbox false
       - name: Compress
         run: |
           sudo apt-get install -y zstd >/dev/null

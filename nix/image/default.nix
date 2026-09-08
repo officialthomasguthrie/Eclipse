@@ -36,7 +36,7 @@
     name = "eclipse";
     verityStore.enable = true;
     partitions = {
-      "esp" = {
+      "00-esp" = {
         repartConfig = {
           Type = "esp";
           Format = "vfat";
@@ -45,13 +45,13 @@
           SizeMaxBytes = "1G";
         };
       };
-      "store-verity" = {
+      "10-store-verity" = {
         repartConfig = {
           Type = "usr-verity";
           Minimize = "best";
         };
       };
-      "store" = {
+      "20-store" = {
         repartConfig = {
           Type = "usr";
           Minimize = "best";
