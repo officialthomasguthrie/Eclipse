@@ -7,6 +7,5 @@ profiles/   base.nix for every image, phase0.nix for the console-only build
 totality/   boot splash. the pngs come from tools/gen-totality-assets.py
 
 image/default.nix follows the repart verity-store appliance layout from nixpkgs
-(nixos/tests/appliance-repart-image-verity-store.nix). it evaluates but hasn't been built yet.
-things only a build will prove: the esp size next to the uki the module puts there, plymouth and the
-luks prompt inside the systemd initrd, and the store partition staying under 8G.
+(nixos/tests/appliance-repart-image-verity-store.nix). it builds in ci (eclipse_0.1.0.raw, about 4.9G) but hasn't been booted on real hardware yet.
+still to prove on a machine: plymouth and the luks prompt inside the systemd initrd, and the persist mounts.
