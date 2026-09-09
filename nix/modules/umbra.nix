@@ -1,4 +1,5 @@
-# umbra: the compositor. the niri fork lands in crates/umbra later, upstream niri stands in until then.
+# umbra: the compositor. the fork is in crates/umbra and the flake builds it as the umbra package,
+# but the session start still runs on upstream niri from nixpkgs until the module moves over.
 {
   config,
   lib,

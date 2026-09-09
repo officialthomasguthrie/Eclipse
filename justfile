@@ -5,18 +5,25 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Build every crate in the workspace
+# the umbra crates need the compositor's system libraries and are built through nix
+first_party := "--workspace --exclude umbra --exclude niri-config --exclude niri-ipc"
+
+# Build every first party crate except umbra
 build:
-    cargo build --workspace
+    cargo build {{first_party}}
 
 # Run the test suite
 test:
-    cargo test --workspace
+    cargo test {{first_party}}
 
 # Format and lint the way CI does
 lint:
     cargo fmt --all --check
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy {{first_party}} --all-targets -- -D warnings
+
+# Build the compositor (linux only)
+umbra:
+    nix build .#umbra -L
 
 # Format everything
 fmt:

@@ -21,8 +21,9 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      # the umbra crates need the compositor's system libraries, the nix job builds those
+      - run: cargo clippy --workspace --exclude umbra --exclude niri-config --exclude niri-ipc --all-targets -- -D warnings
+      - run: cargo test --workspace --exclude umbra --exclude niri-config --exclude niri-ipc
 
   nix:
     name: Nix flake

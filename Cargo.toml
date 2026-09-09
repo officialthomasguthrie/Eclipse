@@ -10,8 +10,10 @@ members = [
   "crates/eclipse-cli",
   "crates/eclipse-flash",
   "crates/totality-splash",
+  "crates/umbra",
+  "crates/umbra/niri-config",
+  "crates/umbra/niri-ipc",
 ]
-# umbra gets added once the niri fork is in, see crates/umbra/README.md
 
 [workspace.package]
 version = "0.1.0"
@@ -23,6 +25,26 @@ authors = ["Thomas Guthrie"]
 
 [workspace.dependencies]
 libeclipse = { path = "crates/libeclipse" }
+
+# shared by the umbra crates
+anyhow = "1.0.104"
+bitflags = "2.13.1"
+clap = { version = "4.6.6", features = ["derive"] }
+insta = "1.48.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tracing = { version = "0.1.44", features = ["max_level_trace", "release_max_level_debug"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracy-client = { version = "0.18.4", default-features = false }
+
+[workspace.dependencies.smithay]
+git = "https://github.com/Smithay/smithay.git"
+rev = "4cf0b62028039661477d482ec4758b687d8f4392"
+default-features = false
+
+[workspace.dependencies.smithay-drm-extras]
+git = "https://github.com/Smithay/smithay.git"
+rev = "4cf0b62028039661477d482ec4758b687d8f4392"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -37,3 +59,11 @@ lto = "thin"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[profile.release.package.niri-config]
+# knuffel generates a lot of debuginfo
+debug = false
+
+[profile.dev.package]
+insta.opt-level = 3
+similar.opt-level = 3

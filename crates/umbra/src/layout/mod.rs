@@ -20,7 +20,7 @@
 //!    output.
 //!
 //! Therefore, we implement the following logic: every workspace keeps track of which output it
-//! originated on—its *original output*. When an output disconnects, its workspaces are appended to
+//! originated on, its *original output*. When an output disconnects, its workspaces are appended to
 //! the (potentially new) primary output, but remember their original output. Then, if the original
 //! output connects again, all workspaces originally from there move back to that output.
 //!

@@ -1,54 +1,17 @@
-[workspace]
-members = [
-    "niri-config",
-    "niri-ipc",
-    "niri-visual-tests",
-]
-
-[workspace.package]
-version = "26.4.0"
-description = "A scrollable-tiling Wayland compositor"
-authors = ["Ivan Molodetskikh <yalterz@gmail.com>"]
-license = "GPL-3.0-or-later"
-edition = "2021"
-repository = "https://github.com/niri-wm/niri"
-rust-version = "1.87"
-
-[workspace.dependencies]
-anyhow = "1.0.104"
-bitflags = "2.13.1"
-clap = { version = "4.6.6", features = ["derive"] }
-insta = "1.48.0"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
-tracing = { version = "0.1.44", features = ["max_level_trace", "release_max_level_debug"] }
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tracy-client = { version = "0.18.4", default-features = false }
-
-[workspace.dependencies.smithay]
-# version = "0.4.1"
-git = "https://github.com/Smithay/smithay.git"
-rev = "4cf0b62028039661477d482ec4758b687d8f4392"
-default-features = false
-
-[workspace.dependencies.smithay-drm-extras]
-# version = "0.1.0"
-git = "https://github.com/Smithay/smithay.git"
-rev = "4cf0b62028039661477d482ec4758b687d8f4392"
-# path = "../smithay/smithay-drm-extras"
-
 [package]
-name = "niri"
+name = "umbra"
 version.workspace = true
-description.workspace = true
+description = "The Eclipse compositor"
 authors.workspace = true
 license.workspace = true
-edition.workspace = true
+edition = "2021"
 repository.workspace = true
-rust-version.workspace = true
+rust-version = "1.87"
 
-readme = "README.md"
-keywords = ["wayland", "compositor", "tiling", "smithay", "wm"]
+# the library keeps the niri name, the test snapshots are keyed on it
+[lib]
+name = "niri"
+path = "src/lib.rs"
 
 [dependencies]
 accesskit = { version = "0.24", optional = true }
@@ -75,8 +38,8 @@ keyframe = { version = "1.1.1", default-features = false }
 libc = "0.2.189"
 libdisplay-info = "0.3.0"
 log = { version = "0.4.33", features = ["max_level_trace", "release_max_level_debug"] }
-niri-config = { version = "26.4.0", path = "niri-config" }
-niri-ipc = { version = "26.4.0", path = "niri-ipc", features = ["clap"] }
+niri-config = { path = "niri-config" }
+niri-ipc = { path = "niri-ipc", features = ["clap"] }
 ordered-float = "5.3.0"
 pango = { version = "0.21.5", features = ["v1_44"] }
 pangocairo = "0.21.5"
@@ -148,41 +111,3 @@ dinit = []
 [lints.clippy]
 new_without_default = "allow"
 collapsible_match = "allow"
-
-[profile.release]
-debug = "line-tables-only"
-overflow-checks = true
-lto = "thin"
-
-[profile.release.package.niri-config]
-# knuffel with chomsky generates a metric ton of debuginfo.
-debug = false
-
-[profile.dev.package]
-insta.opt-level = 3
-similar.opt-level = 3
-
-[package.metadata.generate-rpm]
-version = "26.04"
-assets = [
-    { source = "target/release/niri", dest = "/usr/bin/", mode = "755" },
-    { source = "resources/niri-session", dest = "/usr/bin/", mode = "755" },
-    { source = "resources/niri.desktop", dest = "/usr/share/wayland-sessions/", mode = "644" },
-    { source = "resources/niri-portals.conf", dest = "/usr/share/xdg-desktop-portal/", mode = "644" },
-    { source = "resources/niri.service", dest = "/usr/lib/systemd/user/", mode = "644" },
-    { source = "resources/niri-shutdown.target", dest = "/usr/lib/systemd/user/", mode = "644" },
-]
-[package.metadata.generate-rpm.requires]
-alacritty = "*"
-fuzzel = "*"
-
-[package.metadata.deb]
-depends = "alacritty, fuzzel"
-assets = [
-    ["target/release/niri", "usr/bin/", "755"],
-    ["resources/niri-session", "usr/bin/", "755"],
-    ["resources/niri.desktop", "/usr/share/wayland-sessions/", "644"],
-    ["resources/niri-portals.conf", "/usr/share/xdg-desktop-portal/", "644"],
-    ["resources/niri.service", "/usr/lib/systemd/user/", "644"],
-    ["resources/niri-shutdown.target", "/usr/lib/systemd/user/", "644"],
-]

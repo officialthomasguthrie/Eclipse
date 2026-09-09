@@ -14,6 +14,10 @@ else
     case "$f" in
       *.png|*.jpg|*.jpeg|*.gif|*.ico|*.gguf|*.onnx|*.ttf|*.woff|*.woff2) continue ;;
       LICENSE*|*/LICENSE*|Cargo.lock|flake.lock|tools/design-lint.sh) continue ;;
+      # the compositor is forked third party code. its comments and shaders are not a surface
+      # anyone sees, only its readme is ours
+      crates/umbra/README.md) ;;
+      crates/umbra/*) continue ;;
     esac
     files+=("$f")
   done < <(git ls-files)

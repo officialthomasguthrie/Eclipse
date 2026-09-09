@@ -76,18 +76,72 @@
           toolchain = pkgsRust.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           craneLib = (crane.mkLib pkgsRust).overrideToolchain toolchain;
           src = craneLib.cleanCargoSource ./.;
+          # the compositor is built apart from the small crates: it pulls in smithay and a dozen
+          # system libraries, and the rest of the workspace should stay cheap to build and check
+          firstParty = "--workspace --exclude umbra --exclude niri-config --exclude niri-ipc";
           common = {
             inherit src;
             strictDeps = true;
             pname = "eclipse";
             version = "0.1.0";
+            cargoExtraArgs = firstParty;
           };
           cargoArtifacts = craneLib.buildDepsOnly common;
-          # every first-party binary in one package
+          # every first-party binary except umbra in one package
           workspace = craneLib.buildPackage (
             common
             // {
               inherit cargoArtifacts;
+              doCheck = false;
+            }
+          );
+          # umbra reads shaders, a cursor image and its default config from next to the sources,
+          # the cargo source filter alone would drop them
+          umbraSrc = lib.cleanSourceWith {
+            src = craneLib.path ./.;
+            filter =
+              path: type: craneLib.filterCargoSources path type || lib.hasInfix "/crates/umbra" (toString path);
+          };
+          umbraCommon = {
+            src = umbraSrc;
+            strictDeps = true;
+            pname = "umbra";
+            version = "0.1.0";
+            cargoExtraArgs = "-p umbra";
+            nativeBuildInputs = [
+              pkgsRust.rustPlatform.bindgenHook
+              pkgs.pkg-config
+            ];
+            buildInputs = with pkgs; [
+              cairo
+              dbus
+              libGL
+              libdisplay-info_0_3
+              libinput
+              seatd
+              libxkbcommon
+              libgbm
+              pango
+              pipewire
+              systemd
+              wayland
+            ];
+            # libEGL and libwayland-client are opened at run time, keep them in the rpath
+            RUSTFLAGS = toString (
+              map (arg: "-C link-arg=" + arg) [
+                "-Wl,--push-state,--no-as-needed"
+                "-lEGL"
+                "-lwayland-client"
+                "-Wl,--pop-state"
+              ]
+            );
+            NIRI_BUILD_COMMIT = self.shortRev or self.dirtyShortRev or "unknown";
+          };
+          umbraArtifacts = craneLib.buildDepsOnly umbraCommon;
+          umbra = craneLib.buildPackage (
+            umbraCommon
+            // {
+              cargoArtifacts = umbraArtifacts;
               doCheck = false;
             }
           );
@@ -99,6 +153,7 @@
             default = workspace;
             inherit workspace;
           }
+          // lib.optionalAttrs pkgs.stdenv.isLinux { inherit umbra; }
           // lib.optionalAttrs isImageHost {
             image = os.system.build.image;
             # boots a raw image in qemu. `nix run .#vm` hands it the image above, the boot test builds
@@ -229,7 +284,8 @@
             );
             fmt = craneLib.cargoFmt { inherit src; };
             tests = craneLib.cargoTest (common // { inherit cargoArtifacts; });
-          };
+          }
+          // lib.optionalAttrs pkgs.stdenv.isLinux { inherit umbra; };
 
           devShells.default = craneLib.devShell {
             checks = self'.checks;
