@@ -180,6 +180,9 @@ jobs:
       - name: Boot
         run: |
           zstd -d --rm eclipse.raw.zst -o eclipse.raw
+          # zstd keeps the mode of what it compressed, and that was a store file at 444. the vm
+          # app copies a read-only image and a second 5.7G does not fit on the runner
+          chmod u+w eclipse.raw
           printf 'eclipse-test' > pass.txt
           python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw pass.txt --models models/cache \
             --log serial.log --splash splash.png --desktop desktop.png --corona
