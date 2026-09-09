@@ -10,8 +10,13 @@
   services.getty.autologinUser = "eclipse";
 
   # the luks prompt also on the serial console. systemd's console agent stays out of plymouth's way
-  # by default, so it runs on ttyS0 only and leaves tty1 to the splash.
-  boot.initrd.systemd.paths.systemd-ask-password-console.wantedBy = [ "sysinit.target" ];
+  # by default (both its path and service units check for plymouth), so it runs on ttyS0 only
+  # and leaves tty1 to the splash.
+  boot.initrd.systemd.paths.systemd-ask-password-console = {
+    wantedBy = [ "sysinit.target" ];
+    overrideStrategy = "asDropin";
+    unitConfig.ConditionPathExists = "";
+  };
   boot.initrd.systemd.services.systemd-ask-password-console = {
     overrideStrategy = "asDropin";
     unitConfig.ConditionPathExists = "";
