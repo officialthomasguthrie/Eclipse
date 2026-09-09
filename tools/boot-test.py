@@ -24,7 +24,9 @@ virtio gpu for this, umbra renders on it in software.
 
 With --corona the desktop check expects corona's panel along the top of that screen: umbra reports a
 layer surface with its namespace, and the screendump has the panel gray, the field inside it and the
-desktop gray below.
+desktop gray below. The test then types into the field from the serial shell with `corona --enter`
+and looks again: a nushell pipeline puts three rows under the field, a command with arguments it does
+not know puts an error line there, and `corona --escape` leaves the panel the height it started at.
 """
 
 import argparse
@@ -135,12 +137,19 @@ MOON = (0, 0, 0)
 RING = 0.03
 # what umbra paints with no window open, the background from nix/modules/umbra.nix
 DESKTOP = (36, 36, 36)
-# corona's panel, from crates/corona/src/ui.rs: panel gray, field gray, panel height and field size
-# in logical pixels
+# corona's panel, from crates/corona/src/ui.rs: panel gray, field gray, and the sizes in logical
+# pixels. the panel is the field's row plus whatever the result list and the error line need
 PANEL = (30, 30, 30)
 FIELD = (46, 46, 46)
 PANEL_HEIGHT = 32
 FIELD_SIZE = (480, 24)
+ROW_HEIGHT = 22
+ERROR_HEIGHT = 22
+BOTTOM_PAD = 4
+# what the field and the list ask corona to type, and how many rows the pipeline prints
+RESULT_LINE = "echo [eclipse eclipse eclipse]"
+RESULT_ROWS = 3
+ERROR_LINE = "wifi dance"
 
 
 def near(pixel, color, tolerance):
@@ -190,9 +199,15 @@ def check_splash(width, height, rgb):
     return ok, lines
 
 
-def check_desktop(width, height, rgb, corona=False):
+def panel_height(rows, error):
+    """How tall corona's panel is with this many result rows and with or without the error line."""
+    under = rows * ROW_HEIGHT + (ERROR_HEIGHT if error else 0)
+    return PANEL_HEIGHT + under + BOTTOM_PAD if under else PANEL_HEIGHT
+
+
+def check_desktop(width, height, rgb, corona=False, rows=0, error=False):
     """Count the desktop gray and the console's black in a screendump, and with corona the panel
-    along the top and the field in it. Returns (ok, lines to print)."""
+    along the top, the field in it and the result list under it. Returns (ok, lines to print)."""
     gray = black = panel = field = 0
     panel_rows = 0
     for y in range(height):
@@ -219,13 +234,16 @@ def check_desktop(width, height, rgb, corona=False):
     ]
     if corona:
         # the compositor may scale the panel, so its size on screen gives the scale
-        scale = panel_rows / PANEL_HEIGHT
-        field_area = FIELD_SIZE[0] * FIELD_SIZE[1] * scale * scale
+        wanted = panel_height(rows, error)
+        scale = panel_rows / wanted
+        # the field, and under it one field-gray rectangle as tall as the rows it holds
+        field_area = (FIELD_SIZE[0] * FIELD_SIZE[1] + FIELD_SIZE[0] * rows * ROW_HEIGHT) * scale * scale
+        below = total - panel_rows * width
         checks += [
-            ("the desktop background covers the rest", gray >= 0.9 * total, f"{gray} of {total}"),
-            ("the panel runs along the top", 0.9 * PANEL_HEIGHT <= panel_rows <= 3 * PANEL_HEIGHT and panel >= 0.3 * panel_rows * width,
-             f"{panel_rows} rows, {panel} panel pixels"),
-            ("the field is in the panel", 0.6 * field_area <= field <= 1.1 * field_area,
+            ("the desktop background covers the rest", gray >= 0.95 * below, f"{gray} of {below}"),
+            ("the panel is as tall as its contents", 0.9 * wanted <= panel_rows <= 3 * wanted and panel >= 0.3 * panel_rows * width,
+             f"{panel_rows} rows, expected about {wanted}, {panel} panel pixels"),
+            ("the field and the list are in it", 0.6 * field_area <= field <= 1.1 * field_area,
              f"{field}, expected about {field_area:.0f} at scale {scale:.2f}"),
         ]
     else:
@@ -439,21 +457,25 @@ def main():
         if state != "active":
             fail(f"greetd.service is {state}, expected active")
 
-        desktop_deadline = time.monotonic() + args.desktop_timeout
-        while True:
-            try:
-                width, height, rgb = screendump(args.qmp, work, "desktop")
-            except (OSError, RuntimeError) as e:
-                fail(f"screendump: {e}")
-            good, lines = check_desktop(width, height, rgb, corona=args.corona)
-            if good or time.monotonic() > desktop_deadline:
-                break
-            time.sleep(5)
-        write_png(args.desktop, width, height, rgb)
-        print("\nboot-test: " + "\nboot-test: ".join(lines), flush=True)
-        if not good:
-            fail(f"the desktop is not on screen, see {args.desktop}")
-        ok("desktop")
+        def look(what, png, seconds, **shape):
+            """Screendump until the panel has the shape we asked for, or give up and save it."""
+            deadline = time.monotonic() + seconds
+            while True:
+                try:
+                    width, height, rgb = screendump(args.qmp, work, "desktop")
+                except (OSError, RuntimeError) as e:
+                    fail(f"screendump: {e}")
+                good, lines = check_desktop(width, height, rgb, corona=args.corona, **shape)
+                if good or time.monotonic() > deadline:
+                    break
+                time.sleep(2 if shape else 5)
+            write_png(png, width, height, rgb)
+            print("\nboot-test: " + "\nboot-test: ".join(lines), flush=True)
+            if not good:
+                fail(f"{what} is not on screen, see {png}")
+            ok(what)
+
+        look("desktop", args.desktop, args.desktop_timeout)
 
         # 5a. the compositor knows corona's surface too. the session's ipc socket is in the
         # owner's runtime directory, the serial shell runs as the owner
@@ -463,6 +485,23 @@ def main():
                 fail("umbra lists no layer surface named corona")
             expect([PROMPT], "the prompt")
             ok("corona panel")
+
+            # 5b. the field takes a line from the terminal, over the socket in the session's
+            # runtime directory, and what the line printed lands in the list under it
+            stem, extension = os.path.splitext(args.desktop)
+            child.send("set -x XDG_RUNTIME_DIR /run/user/(id -u)\r")
+            expect([PROMPT], "the prompt")
+            child.send(f'corona --enter "{RESULT_LINE}"\r')
+            expect([PROMPT], "the prompt")
+            look("the result list", f"{stem}-corona{extension}", 20, rows=RESULT_ROWS)
+
+            child.send(f'corona --enter "{ERROR_LINE}"\r')
+            expect([PROMPT], "the prompt")
+            look("the error line", f"{stem}-corona-error{extension}", 20, rows=0, error=True)
+
+            child.send("corona --escape\r")
+            expect([PROMPT], "the prompt")
+            look("the panel back at the field", f"{stem}-corona-empty{extension}", 20, rows=0)
 
     # 6. down
     child.send("sudo systemctl poweroff\r")

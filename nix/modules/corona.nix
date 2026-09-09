@@ -26,7 +26,8 @@ in
       ]
     ];
     # what the os commands run is already there: nmcli with networkmanager, wpctl with pipewire,
-    # brightnessctl with umbra, systemctl always
+    # brightnessctl with umbra, systemctl always. nushell is the third interpreter: corona runs
+    # this binary with an argument vector, and it is the interactive nushell as well
     environment.systemPackages = [ pkgs.nushell ];
   };
 }

@@ -202,7 +202,7 @@ jobs:
         continue-on-error: true
         with:
           name: boot-desktop-${{ github.sha }}
-          path: desktop.png
+          path: desktop*.png
           if-no-files-found: ignore
       - name: Drop the image from the cache
         if: always()

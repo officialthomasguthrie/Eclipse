@@ -1,12 +1,15 @@
 //! corona: the shell. One field on the desktop and four interpreters behind it: the app
-//! launcher, the OS commands, nushell and Aura. The first two work, the last two say so.
+//! launcher, the OS commands, nushell and Aura. The first three work, Aura says it does not.
 //!
 //! `corona` draws the field as a layer-shell panel on the running session. `corona --route
 //! <words>` prints what the field would do with those words and runs nothing. `corona --do
 //! [--yes] <words>` does it from a terminal instead, with `--yes` standing in for the
-//! confirmation the field asks for.
+//! confirmation the field asks for. `corona --type <words>`, `corona --enter [<words>]` and
+//! `corona --escape` type into the field of the panel that is already running.
 
+mod control;
 mod launcher;
+mod nu;
 mod os;
 mod route;
 #[cfg(target_os = "linux")]
@@ -32,13 +35,27 @@ fn main() -> ExitCode {
             let words = &args[if yes { 2 } else { 1 }..];
             act(&words.join(" "), yes)
         }
+        Some("--type") => tell(&control::Command::Type(args[1..].join(" "))),
+        Some("--enter") => tell(&control::Command::Enter(args[1..].join(" "))),
+        Some("--escape") => tell(&control::Command::Escape),
         Some(other) => {
             eprintln!(
-                "corona: unknown option {other}. corona [--version | --route <words> | --do [--yes] <words>]"
+                "corona: unknown option {other}. corona [--version | --route <words> | --do [--yes] <words> | --type <words> | --enter [<words>] | --escape]"
             );
             ExitCode::from(2)
         }
         None => panel(),
+    }
+}
+
+/// Type into the field of the panel that is running.
+fn tell(command: &control::Command) -> ExitCode {
+    match control::send(command) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(why) => {
+            eprintln!("{why}");
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -56,7 +73,7 @@ fn act(input: &str, yes: bool) -> ExitCode {
         }
         Interpretation::Os(action) => os::run(&action),
         Interpretation::Usage(usage) => Err(usage.to_string()),
-        Interpretation::Shell(_) => Err("Nushell is not in this build yet.".to_string()),
+        Interpretation::Shell(line) => nu::run(&line),
         Interpretation::Ask(_) => Err("Aura is not in this build yet.".to_string()),
     };
     match outcome {
