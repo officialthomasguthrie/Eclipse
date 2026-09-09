@@ -108,10 +108,16 @@ jobs:
           sudo tools/persist-image.sh eclipse.raw pass.txt
           sgdisk -p eclipse.raw
       - name: Boot
-        run: python3 tools/boot-test.py eclipse.raw pass.txt --log serial.log
+        run: python3 tools/boot-test.py eclipse.raw pass.txt --log serial.log --splash splash.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: boot-serial-${{ github.sha }}
           path: serial.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: boot-splash-${{ github.sha }}
+          path: splash.png
           if-no-files-found: ignore
