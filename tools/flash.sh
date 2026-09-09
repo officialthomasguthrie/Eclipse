@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # flasher for now, linux only. eclipse-flash replaces this later.
-# writes the image, then adds the optional exfat exchange partition and the luks2+btrfs persist partition.
+# writes the image, then adds the optional exfat exchange partition and the persist partition (mkpersist.sh).
 #
 # Usage: sudo tools/flash.sh <image.raw> /dev/sdX [exchange-size|none]   (default exchange: 8G)
 set -euo pipefail
@@ -16,7 +16,7 @@ if [[ "$(cat "/sys/block/$base/removable" 2>/dev/null)" != "1" && "${FORCE:-}" !
   echo "$dev is not a removable drive. Eclipse never touches internal disks. Set FORCE=1 if you are sure." >&2
   exit 1
 fi
-for tool in dd sgdisk partprobe cryptsetup mkfs.btrfs btrfs; do
+for tool in dd sgdisk partprobe; do
   command -v "$tool" >/dev/null || { echo "missing tool: $tool" >&2; exit 1; }
 done
 
@@ -40,23 +40,6 @@ if [[ "$exchange" != "none" ]]; then
   command -v mkfs.exfat >/dev/null && mkfs.exfat -L EXCHANGE /dev/disk/by-partlabel/exchange
 fi
 
-echo ">> Encrypting persist (LUKS2, argon2id). Pick a passphrase."
-cryptsetup luksFormat --type luks2 --pbkdf argon2id --label persist /dev/disk/by-partlabel/persist
-cryptsetup open /dev/disk/by-partlabel/persist persist
-
-echo ">> btrfs and subvolumes"
-mkfs.btrfs -L persist /dev/mapper/persist
-mnt=$(mktemp -d)
-mount -o compress=zstd:3,noatime /dev/mapper/persist "$mnt"
-for sv in @home @var @flatpak @models @hosts @snapshots; do
-  btrfs subvolume create "$mnt/$sv"
-done
-mkdir -p "$mnt/@var/lib/eclipse"
-head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$mnt/@var/lib/eclipse/machine-id"
-echo >> "$mnt/@var/lib/eclipse/machine-id"
-mkdir -p "$mnt/@home/eclipse"
-chown 1000:100 "$mnt/@home/eclipse"
-umount "$mnt"
-cryptsetup close persist
+"$(dirname "$(readlink -f "$0")")/mkpersist.sh" /dev/disk/by-partlabel/persist
 
 echo ">> Done. Copy the shipped models into @models before first boot if you want Aura."

@@ -34,7 +34,11 @@
 
   image.repart = {
     name = "eclipse";
-    verityStore.enable = true;
+    verityStore = {
+      enable = true;
+      # no boot manager yet: the uki sits at the removable media path, the one place firmware looks on its own
+      ukiPath = "/EFI/BOOT/BOOTX64.EFI";
+    };
     partitions = {
       "00-esp" = {
         repartConfig = {
