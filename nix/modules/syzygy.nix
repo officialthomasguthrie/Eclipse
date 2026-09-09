@@ -1,9 +1,10 @@
 # syzygy: host adaptation. runs before the session, fingerprints the host, loads or creates its profile,
-# publishes it on d-bus. runs the stub binary for now.
+# publishes it on d-bus. for now it only writes the profile under the hosts directory.
 {
   config,
   lib,
   pkgs,
+  self,
   ...
 }:
 let
@@ -12,6 +13,11 @@ in
 {
   options.eclipse.syzygy = {
     enable = lib.mkEnableOption "Syzygy, host adaptation";
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = self.packages.${pkgs.stdenv.hostPlatform.system}.workspace;
+      description = "The build that provides the syzygy binary.";
+    };
     hostsDir = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/eclipse/hosts";
@@ -28,10 +34,18 @@ in
         "getty@tty1.service"
       ];
       after = [ "local-fs.target" ];
+      unitConfig.RequiresMountsFor = cfg.hostsDir;
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "/run/current-system/sw/bin/syzygy --hosts-dir ${cfg.hostsDir}";
+        ExecStart = "${cfg.package}/bin/syzygy --hosts-dir ${cfg.hostsDir}";
+        # reads /sys, writes only the hosts directory
+        ProtectSystem = "strict";
+        ReadWritePaths = [ cfg.hostsDir ];
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateNetwork = true;
+        NoNewPrivileges = true;
       };
     };
   };

@@ -7,7 +7,8 @@ Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--timeout 300] [--log s
 <eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds the persist
 partition to the image with the passphrase from the passfile (persist-image.sh, through sudo), then
 boots the image as an nvme drive. Everything goes through the serial console: the luks prompt, the
-autologin shell, a few commands. The serial output is printed as it arrives and kept in the log file.
+autologin shell, a few commands, the host profile syzygy wrote. The serial output is printed as it
+arrives and kept in the log file.
 
 With --splash the test also takes a screendump through the qemu monitor while the luks prompt is up
 and checks that the Totality splash is on screen: the light disc and the black disc from
@@ -290,7 +291,33 @@ def main():
     expect([PROMPT], "the prompt")
     ok(f"{version.strip()}, phase {phase}, home on persist")
 
-    # 3. down
+    # 3. syzygy wrote a profile for this machine into @hosts. fish puts a bare \r before a
+    # command's output, so these anchor on the whitespace after the value, not before it
+    child.send("systemctl is-active syzygy\r")
+    expect([r"(?<![\w-])(active|inactive|failed|activating)\s"], "the syzygy unit state")
+    state = child.match.group(1)
+    expect([PROMPT], "the prompt")
+    if state != "active":
+        fail(f"syzygy.service is {state}, expected active")
+
+    hosts = "/var/lib/eclipse/hosts"
+    child.send(f"cat {hosts}/current\r")
+    expect([r"(?<![0-9a-f])([0-9a-f]{64})\s"], "the fingerprint in hosts/current")
+    fingerprint = child.match.group(1)
+    expect([PROMPT], "the prompt")
+
+    child.send(f"cat {hosts}/{fingerprint}.toml\r")
+    expect([rf'fingerprint = "{fingerprint}"'], "the fingerprint in the profile")
+    expect([r'class = "(\w+)"'], "the class in the profile")
+    klass = child.match.group(1)
+    expect([r'sys_vendor = "([^"]*)"'], "the vendor in the profile")
+    vendor = child.match.group(1)
+    expect([PROMPT], "the prompt")
+    if klass != "borrowed":
+        fail(f"the profile says class {klass}, expected borrowed")
+    ok(f"host profile {fingerprint[:12]}, class {klass}, vendor {vendor}")
+
+    # 4. down
     child.send("sudo systemctl poweroff\r")
     try:
         child.expect(pexpect.EOF, timeout=90)
