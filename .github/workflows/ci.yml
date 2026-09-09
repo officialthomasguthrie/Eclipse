@@ -96,7 +96,8 @@ jobs:
           retention-days: 14
 
   boot:
-    # the image runs here: persist partition through a loop device, qemu with kvm, everything over serial
+    # the image runs here through the flake's vm app: persist partition through a loop device, qemu
+    # with kvm, everything over serial
     name: Boot test
     runs-on: ubuntu-latest
     needs: image
@@ -107,22 +108,21 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: eclipse-image-${{ github.sha }}
-      - name: Install qemu and the disk tools
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - name: Build the vm app
+        run: nix build .#vm -o vm -L
+      - name: Install pexpect and zstd
         run: |
           sudo apt-get update >/dev/null
-          sudo apt-get install -y --no-install-recommends \
-            qemu-system-x86 ovmf gdisk cryptsetup btrfs-progs python3-pexpect zstd >/dev/null
+          sudo apt-get install -y --no-install-recommends python3-pexpect zstd >/dev/null
       - name: Open kvm to the runner
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; ls -l /dev/kvm; else echo "no /dev/kvm, qemu will use tcg"; fi
-      - name: Add the persist partition
+      - name: Boot
         run: |
           zstd -d --rm eclipse.raw.zst -o eclipse.raw
           printf 'eclipse-test' > pass.txt
-          sudo tools/persist-image.sh eclipse.raw pass.txt
-          sgdisk -p eclipse.raw
-      - name: Boot
-        run: python3 tools/boot-test.py eclipse.raw pass.txt --log serial.log --splash splash.png
+          python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw pass.txt --log serial.log --splash splash.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Boots an image in qemu and checks that the system comes up. The boot job in ci runs this.
+"""Boots an image through the flake's vm app and checks that the system comes up. The boot job in ci
+runs this.
 
-Usage: boot-test.py <image.raw> <passfile> [--timeout 300] [--log serial.log] [--splash splash.png]
+Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--timeout 300] [--log serial.log] [--splash splash.png]
 
-The image needs its persist partition already (persist-image.sh). Everything goes through the serial
-console: the luks prompt, the autologin shell, a few commands. The serial output is printed as it
-arrives and kept in the log file.
+<eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds the persist
+partition to the image with the passphrase from the passfile (persist-image.sh, through sudo), then
+boots the image as an nvme drive. Everything goes through the serial console: the luks prompt, the
+autologin shell, a few commands. The serial output is printed as it arrives and kept in the log file.
 
 With --splash the test also takes a screendump through the qemu monitor while the luks prompt is up
 and checks that the Totality splash is on screen: the light disc and the black disc from
@@ -17,7 +19,6 @@ import glob
 import json
 import math
 import os
-import shutil
 import socket
 import struct
 import sys
@@ -183,61 +184,29 @@ class Tee:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("image")
+    ap.add_argument("vm", help="the eclipse-vm program from nix build .#vm")
+    ap.add_argument("image", help="a raw image without a persist partition yet")
     ap.add_argument("passfile")
     ap.add_argument("--timeout", type=int, default=300, help="seconds for the whole boot")
     ap.add_argument("--log", default="serial.log")
     ap.add_argument("--memory", default="4096")
     ap.add_argument("--qmp", help="unix socket for the qemu monitor")
     ap.add_argument("--splash", help="take a screendump at the luks prompt, check it, save it as this png")
-    ap.add_argument(
-        "--ovmf-code",
-        default=first(
-            [
-                "/usr/share/OVMF/OVMF_CODE_4M.fd",
-                "/usr/share/OVMF/OVMF_CODE.fd",
-                "/usr/share/edk2/x64/OVMF_CODE.4m.fd",
-                "/usr/share/edk2-ovmf/OVMF_CODE.fd",
-            ]
-        ),
-    )
-    ap.add_argument(
-        "--ovmf-vars",
-        default=first(
-            [
-                "/usr/share/OVMF/OVMF_VARS_4M.fd",
-                "/usr/share/OVMF/OVMF_VARS.fd",
-                "/usr/share/edk2/x64/OVMF_VARS.4m.fd",
-                "/usr/share/edk2-ovmf/OVMF_VARS.fd",
-            ]
-        ),
-    )
     args = ap.parse_args()
-    if not args.ovmf_code or not args.ovmf_vars:
-        sys.exit("no ovmf firmware found, pass --ovmf-code and --ovmf-vars")
     with open(args.passfile, encoding="utf-8") as f:
         passphrase = f.read()
 
     work = tempfile.mkdtemp(prefix="eclipse-boot-")
-    vars_copy = os.path.join(work, "vars.fd")
-    shutil.copy(args.ovmf_vars, vars_copy)
-    os.chmod(vars_copy, 0o644)
-
     if args.splash and not args.qmp:
         args.qmp = os.path.join(work, "qmp.sock")
 
-    kvm = os.access("/dev/kvm", os.R_OK | os.W_OK)
+    # the app picks kvm or tcg and the firmware. what follows its options replaces its defaults
     cmd = [
-        "qemu-system-x86_64",
-        "-machine", "q35,accel=" + ("kvm" if kvm else "tcg"),
-        "-cpu", "host" if kvm else "max",
+        os.path.abspath(args.vm),
+        "--image", os.path.abspath(args.image),
+        "--persist", os.path.abspath(args.passfile),
         "-smp", "2",
         "-m", args.memory,
-        "-drive", f"if=pflash,format=raw,readonly=on,file={args.ovmf_code}",
-        "-drive", f"if=pflash,format=raw,file={vars_copy}",
-        "-device", "qemu-xhci",
-        "-drive", f"if=none,id=usb0,format=raw,file={args.image}",
-        "-device", "usb-storage,drive=usb0",
         "-vga", "std",
         "-display", "none",
         "-monitor", "none",
@@ -247,7 +216,6 @@ def main():
     if args.qmp:
         cmd += ["-qmp", f"unix:{args.qmp},server,nowait"]
     print("boot-test: " + " ".join(cmd), flush=True)
-    print("boot-test: kvm " + ("yes" if kvm else "no, this will be slow"), flush=True)
 
     start = time.monotonic()
     deadline = start + args.timeout

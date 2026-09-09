@@ -27,7 +27,7 @@ fmt:
 image:
     nix build .#image -L
 
-# Boot the image in qemu as a usb stick (linux host with kvm)
+# Boot the image in qemu (linux host with kvm)
 vm *ARGS:
     nix run .#vm -- {{ARGS}}
 
