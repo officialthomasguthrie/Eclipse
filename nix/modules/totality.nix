@@ -29,6 +29,10 @@ in
       enable = true;
       theme = "totality";
       themePackages = [ theme ];
+      # the initrd has no gpu drivers, only the firmware framebuffer through simpledrm. plymouth
+      # waits 8 s for a real drm device before it touches simpledrm unless told otherwise, and the
+      # luks prompt comes before that.
+      extraConfig = "UseSimpledrm=1";
     };
     boot.kernelParams = [
       "quiet"
