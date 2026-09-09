@@ -109,7 +109,17 @@ jobs:
             echo "dropping artifact $id from $created"
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" || true
           done
+      - name: Hand the image to the boot job
+        # through the cache, not an artifact: artifact storage has a quota of its own and a full
+        # one refuses every upload for hours, which used to take the boot job down with it
+        uses: actions/cache/save@v4
+        with:
+          path: eclipse.raw.zst
+          key: image-${{ github.sha }}
       - uses: actions/upload-artifact@v4
+        # the image to download and flash. the boot job does not need it, so a full quota here
+        # is not a failure
+        continue-on-error: true
         with:
           name: eclipse-image-${{ github.sha }}
           path: eclipse.raw.zst
@@ -123,11 +133,18 @@ jobs:
     needs: image
     if: ${{ github.event_name != 'pull_request' }}
     timeout-minutes: 30
+    permissions:
+      contents: read
+      # the last step drops the image out of the cache again
+      actions: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - name: Take the image from the image job
+        uses: actions/cache/restore@v4
         with:
-          name: eclipse-image-${{ github.sha }}
+          path: eclipse.raw.zst
+          key: image-${{ github.sha }}
+          fail-on-cache-miss: true
       - uses: DeterminateSystems/determinate-nix-action@v3
       - name: Build the vm app
         run: nix build .#vm -o vm -L
@@ -168,19 +185,28 @@ jobs:
             --log serial.log --splash splash.png --desktop desktop.png --corona
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: boot-serial-${{ github.sha }}
           path: serial.log
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: boot-splash-${{ github.sha }}
           path: splash.png
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: boot-desktop-${{ github.sha }}
           path: desktop.png
           if-no-files-found: ignore
+      - name: Drop the image from the cache
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh cache delete "image-${{ github.sha }}" || true
