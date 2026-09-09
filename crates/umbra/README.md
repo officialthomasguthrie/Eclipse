@@ -12,6 +12,9 @@ Config docs for the format this still reads are in upstream's wiki at that commi
 The flake builds it as the umbra package, on Linux only. It needs libinput, seatd, libxkbcommon,
 gbm, egl, libdisplay-info, pipewire, pango, dbus and systemd at build time.
 
-What gets added, in order: the session start on tty1, output profiles from Syzygy, the session
-journal for teleport, private protocols for Corona and Aura, the quake console, the lock screen,
-the Ghost mode banner.
+In the image greetd starts `umbra --session` on tty1 as the owner, with the system config from
+/etc/niri/config.kdl. A file at ~/.config/niri/config.kdl replaces it for that user. The desktop
+is a flat gray, the boot test takes a screendump of it on a virtio gpu.
+
+What gets added, in order: output profiles from Syzygy, the session journal for teleport, private
+protocols for Corona and Aura, the quake console, the lock screen, the Ghost mode banner.

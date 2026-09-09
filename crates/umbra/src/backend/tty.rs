@@ -783,17 +783,24 @@ impl Tty {
             GbmDevice::new(device_fd)
         }?;
 
+        let primary_node = self.primary_node;
         let mut try_initialize_gpu = || {
             let display = unsafe { EGLDisplay::new(gbm.clone())? };
             let egl_device = EGLDevice::device_for_display(&display)?;
 
-            // Software EGL devices (e.g., llvmpipe/softpipe) are rejected for now. They have some
-            // problems (segfault on importing dmabufs from other renderers) and need to be
-            // excluded from some places like DRM leasing.
-            ensure!(
-                !egl_device.is_software(),
-                "software EGL renderers are skipped"
-            );
+            // Software EGL devices (llvmpipe, softpipe) serve the primary node only. A machine
+            // without a working gpu driver, or a vm without 3d, still gets a desktop that way.
+            // Upstream niri skips them everywhere: importing dmabufs from another renderer can
+            // crash, and they must stay out of DRM leasing. Both only come up with a second
+            // device, so the second device is where they are still skipped.
+            let software = egl_device.is_software();
+            if software {
+                ensure!(
+                    node == primary_node,
+                    "software EGL renderers are only used for the primary node"
+                );
+                warn!("no hardware renderer for the primary node, rendering in software");
+            }
 
             let render_node = egl_device
                 .try_get_render_node()
@@ -805,12 +812,18 @@ impl Tty {
                 .add_node(render_node, gbm.clone())
                 .context("error adding render node to GPU manager")?;
 
-            Ok(render_node)
+            Ok((render_node, software))
         };
 
         let render_node = match try_initialize_gpu() {
-            Ok(render_node) => {
+            Ok((render_node, software)) => {
                 debug!("got render node: {render_node}");
+                if software && render_node != self.primary_render_node {
+                    // a software device has no render node of its own, the primary node stands
+                    // in for it so the primary renderer below is set up on it
+                    debug!("using {render_node} as the primary render node");
+                    self.primary_render_node = render_node;
+                }
                 Some(render_node)
             }
             Err(err) => {

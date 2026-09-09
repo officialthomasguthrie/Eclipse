@@ -3,7 +3,7 @@
 runs this.
 
 Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeout 300] [--log serial.log]
-       [--splash splash.png]
+       [--splash splash.png] [--desktop desktop.png]
 
 <eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds the persist
 partition to the image with the passphrase from the passfile (persist-image.sh, through sudo), then
@@ -17,6 +17,10 @@ waits for aura-inference to load the model and asks the local api for a short co
 With --splash the test also takes a screendump through the qemu monitor while the luks prompt is up
 and checks that the Totality splash is on screen: the light disc and the black disc from
 nix/totality/plymouth against the gray background. The dump is saved as a png.
+
+With --desktop the test checks that greetd is up and takes a screendump of the running session: umbra
+paints its background gray over the whole screen, a console would show black with text. The vm has a
+virtio gpu for this, umbra renders on it in software.
 """
 
 import argparse
@@ -125,6 +129,8 @@ BACKGROUND = (30, 30, 30)
 SUN = (204, 204, 204)
 MOON = (0, 0, 0)
 RING = 0.03
+# what umbra paints with no window open, the background from nix/modules/umbra.nix
+DESKTOP = (36, 36, 36)
 
 
 def near(pixel, color, tolerance):
@@ -174,6 +180,35 @@ def check_splash(width, height, rgb):
     return ok, lines
 
 
+def check_desktop(width, height, rgb):
+    """Count the desktop gray and the console's black in a screendump. Returns (ok, lines to print)."""
+    gray = black = 0
+    for i in range(0, width * height * 3, 3):
+        px = rgb[i : i + 3]
+        if near(px, DESKTOP, 3):
+            gray += 1
+        elif near(px, MOON, 8):
+            black += 1
+    total = width * height
+    checks = [
+        ("the desktop background covers the screen", gray >= 0.95 * total, f"{gray} of {total}"),
+        ("no console black", black <= 0.02 * total, f"{black} of {total}"),
+    ]
+    lines = [f"desktop: {width}x{height}"]
+    ok = True
+    for name, passed, detail in checks:
+        lines.append(f"desktop: {'ok  ' if passed else 'FAIL'} {name}: {detail}")
+        ok = ok and passed
+    return ok, lines
+
+
+def screendump(qmp_path, work, name):
+    """Take a screendump through the monitor and return (width, height, rgb)."""
+    ppm = os.path.join(work, name + ".ppm")
+    qmp(qmp_path, {"execute": "screendump", "arguments": {"filename": ppm}})
+    return read_ppm(ppm)
+
+
 class Tee:
     def __init__(self, path):
         self.file = open(path, "w", encoding="utf-8", errors="replace")
@@ -199,22 +234,25 @@ def main():
     ap.add_argument("--memory", default="4096")
     ap.add_argument("--qmp", help="unix socket for the qemu monitor")
     ap.add_argument("--splash", help="take a screendump at the luks prompt, check it, save it as this png")
+    ap.add_argument("--desktop", help="take a screendump of the session, check it, save it as this png")
+    ap.add_argument("--desktop-timeout", type=int, default=60, help="seconds for umbra to paint its first frame")
     args = ap.parse_args()
     with open(args.passfile, encoding="utf-8") as f:
         passphrase = f.read()
 
     work = tempfile.mkdtemp(prefix="eclipse-boot-")
-    if args.splash and not args.qmp:
+    if (args.splash or args.desktop) and not args.qmp:
         args.qmp = os.path.join(work, "qmp.sock")
 
-    # the app picks kvm or tcg and the firmware. what follows its options replaces its defaults
+    # the app picks kvm or tcg and the firmware. what follows its options replaces its defaults.
+    # the gpu is virtio: the firmware draws the splash on it and umbra opens it as a drm device
     cmd = [
         os.path.abspath(args.vm),
         "--image", os.path.abspath(args.image),
         "--persist", os.path.abspath(args.passfile),
         "-smp", "2",
         "-m", args.memory,
-        "-vga", "std",
+        "-device", "virtio-vga",
         "-display", "none",
         "-monitor", "none",
         "-serial", "stdio",
@@ -258,10 +296,8 @@ def main():
     # 1a. the splash. cryptsetup waits for us, so the screen is stable
     if args.splash:
         time.sleep(3)
-        ppm = os.path.join(work, "splash.ppm")
         try:
-            qmp(args.qmp, {"execute": "screendump", "arguments": {"filename": ppm}})
-            width, height, rgb = read_ppm(ppm)
+            width, height, rgb = screendump(args.qmp, work, "splash")
         except (OSError, RuntimeError) as e:
             fail(f"screendump: {e}")
         write_png(args.splash, width, height, rgb)
@@ -356,7 +392,33 @@ def main():
         expect([PROMPT], "the prompt")
         ok(f"aura answered {content!r}")
 
-    # 5. down
+    # 5. the desktop. greetd runs umbra on tty1 as the owner. umbra needs a moment to open the gpu
+    # and paint its first frame, so the screendump is retried until it shows the background
+    if args.desktop:
+        child.send("systemctl is-active greetd\r")
+        expect([r"(?<![\w-])(active|inactive|failed|activating)\s"], "the greetd unit state")
+        state = child.match.group(1)
+        expect([PROMPT], "the prompt")
+        if state != "active":
+            fail(f"greetd.service is {state}, expected active")
+
+        desktop_deadline = time.monotonic() + args.desktop_timeout
+        while True:
+            try:
+                width, height, rgb = screendump(args.qmp, work, "desktop")
+            except (OSError, RuntimeError) as e:
+                fail(f"screendump: {e}")
+            good, lines = check_desktop(width, height, rgb)
+            if good or time.monotonic() > desktop_deadline:
+                break
+            time.sleep(5)
+        write_png(args.desktop, width, height, rgb)
+        print("\nboot-test: " + "\nboot-test: ".join(lines), flush=True)
+        if not good:
+            fail(f"the desktop is not on screen, see {args.desktop}")
+        ok("desktop")
+
+    # 6. down
     child.send("sudo systemctl poweroff\r")
     try:
         child.expect(pexpect.EOF, timeout=90)

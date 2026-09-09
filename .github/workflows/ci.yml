@@ -146,7 +146,7 @@ jobs:
           zstd -d --rm eclipse.raw.zst -o eclipse.raw
           printf 'eclipse-test' > pass.txt
           python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw pass.txt --models models/cache \
-            --log serial.log --splash splash.png
+            --log serial.log --splash splash.png --desktop desktop.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -158,4 +158,10 @@ jobs:
         with:
           name: boot-splash-${{ github.sha }}
           path: splash.png
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: boot-desktop-${{ github.sha }}
+          path: desktop.png
           if-no-files-found: ignore
