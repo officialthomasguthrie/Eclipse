@@ -1,5 +1,5 @@
-# phase 0 plus the first of phase 1: console, shell, splash, aura's backend if a model is there, and
-# umbra on tty1. the serial console keeps its autologin shell, the boot test talks to it.
+# phase 0 plus the first of phase 1: console, shell, splash, aura's backend if a model is there,
+# umbra on tty1 and corona's panel on it. the serial console keeps its autologin shell, the boot test talks to it.
 { config, ... }:
 {
   boot.kernelParams = [
@@ -46,7 +46,7 @@
   # the smallest chat model in the manifest. the boot test copies it into @models before boot
   eclipse.aura.model = "Qwen3-0.6B-Q8_0.gguf";
   eclipse.umbra.enable = true;
-  eclipse.corona.enable = false;
+  eclipse.corona.enable = true;
   eclipse.penumbra.enable = false;
   eclipse.vault.enable = true;
 

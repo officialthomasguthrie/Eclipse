@@ -39,6 +39,9 @@ let
     }
 
     prefer-no-csd
+    ${lib.concatMapStringsSep "\n" (
+      command: "spawn-at-startup " + lib.concatMapStringsSep " " (word: ''"${word}"'') command
+    ) cfg.startup}
 
     hotkey-overlay {
         skip-at-startup
@@ -112,6 +115,12 @@ in
       type = lib.types.str;
       default = "#242424";
       description = "the desktop background, a flat neutral gray. the boot test looks for it";
+    };
+    startup = lib.mkOption {
+      type = lib.types.listOf (lib.types.listOf lib.types.str);
+      default = [ ];
+      example = [ [ "corona" ] ];
+      description = "programs the compositor starts with the session, each as its argument list";
     };
   };
 

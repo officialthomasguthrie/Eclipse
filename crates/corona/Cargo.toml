@@ -15,5 +15,11 @@ path = "src/main.rs"
 [dependencies]
 libeclipse.workspace = true
 
+# the panel needs a wayland session and layer-shell, so it only exists on linux. the software
+# renderer is the one that works on every machine, so wgpu stays out
+[target.'cfg(target_os = "linux")'.dependencies]
+iced = { version = "0.14.0", default-features = false, features = ["tiny-skia", "wayland", "thread-pool"] }
+iced_layershell = { version = "0.19.1", default-features = false }
+
 [lints]
 workspace = true

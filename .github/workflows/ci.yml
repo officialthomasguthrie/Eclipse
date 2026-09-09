@@ -20,6 +20,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # corona's panel links the wayland client library and xkbcommon
+      - run: sudo apt-get install -y --no-install-recommends libwayland-dev libxkbcommon-dev >/dev/null
       - run: cargo fmt --all --check
       # the umbra crates need the compositor's system libraries, the nix job builds those
       - run: cargo clippy --workspace --exclude umbra --exclude niri-config --exclude niri-ipc --all-targets -- -D warnings
@@ -146,7 +148,7 @@ jobs:
           zstd -d --rm eclipse.raw.zst -o eclipse.raw
           printf 'eclipse-test' > pass.txt
           python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw pass.txt --models models/cache \
-            --log serial.log --splash splash.png --desktop desktop.png
+            --log serial.log --splash splash.png --desktop desktop.png --corona
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -3,7 +3,7 @@
 runs this.
 
 Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeout 300] [--log serial.log]
-       [--splash splash.png] [--desktop desktop.png]
+       [--splash splash.png] [--desktop desktop.png] [--corona]
 
 <eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds the persist
 partition to the image with the passphrase from the passfile (persist-image.sh, through sudo), then
@@ -21,6 +21,10 @@ nix/totality/plymouth against the gray background. The dump is saved as a png.
 With --desktop the test checks that greetd is up and takes a screendump of the running session: umbra
 paints its background gray over the whole screen, a console would show black with text. The vm has a
 virtio gpu for this, umbra renders on it in software.
+
+With --corona the desktop check expects corona's panel along the top of that screen: umbra reports a
+layer surface with its namespace, and the screendump has the panel gray, the field inside it and the
+desktop gray below.
 """
 
 import argparse
@@ -131,6 +135,12 @@ MOON = (0, 0, 0)
 RING = 0.03
 # what umbra paints with no window open, the background from nix/modules/umbra.nix
 DESKTOP = (36, 36, 36)
+# corona's panel, from crates/corona/src/ui.rs: panel gray, field gray, panel height and field size
+# in logical pixels
+PANEL = (30, 30, 30)
+FIELD = (46, 46, 46)
+PANEL_HEIGHT = 32
+FIELD_SIZE = (480, 24)
 
 
 def near(pixel, color, tolerance):
@@ -180,20 +190,46 @@ def check_splash(width, height, rgb):
     return ok, lines
 
 
-def check_desktop(width, height, rgb):
-    """Count the desktop gray and the console's black in a screendump. Returns (ok, lines to print)."""
-    gray = black = 0
-    for i in range(0, width * height * 3, 3):
-        px = rgb[i : i + 3]
-        if near(px, DESKTOP, 3):
-            gray += 1
-        elif near(px, MOON, 8):
-            black += 1
+def check_desktop(width, height, rgb, corona=False):
+    """Count the desktop gray and the console's black in a screendump, and with corona the panel
+    along the top and the field in it. Returns (ok, lines to print)."""
+    gray = black = panel = field = 0
+    panel_rows = 0
+    for y in range(height):
+        row = y * width * 3
+        row_panel = row_field = 0
+        for x in range(width):
+            px = rgb[row + x * 3 : row + x * 3 + 3]
+            if near(px, DESKTOP, 3):
+                gray += 1
+            elif near(px, MOON, 8):
+                black += 1
+            elif near(px, PANEL, 3):
+                row_panel += 1
+            elif near(px, FIELD, 3):
+                row_field += 1
+        panel += row_panel
+        field += row_field
+        # the panel is the run of rows from the top that are mostly its two grays
+        if row_panel + row_field > width / 2 and panel_rows == y:
+            panel_rows += 1
     total = width * height
     checks = [
-        ("the desktop background covers the screen", gray >= 0.95 * total, f"{gray} of {total}"),
         ("no console black", black <= 0.02 * total, f"{black} of {total}"),
     ]
+    if corona:
+        # the compositor may scale the panel, so its size on screen gives the scale
+        scale = panel_rows / PANEL_HEIGHT
+        field_area = FIELD_SIZE[0] * FIELD_SIZE[1] * scale * scale
+        checks += [
+            ("the desktop background covers the rest", gray >= 0.9 * total, f"{gray} of {total}"),
+            ("the panel runs along the top", 0.9 * PANEL_HEIGHT <= panel_rows <= 3 * PANEL_HEIGHT and panel >= 0.3 * panel_rows * width,
+             f"{panel_rows} rows, {panel} panel pixels"),
+            ("the field is in the panel", 0.6 * field_area <= field <= 1.1 * field_area,
+             f"{field}, expected about {field_area:.0f} at scale {scale:.2f}"),
+        ]
+    else:
+        checks.insert(0, ("the desktop background covers the screen", gray >= 0.95 * total, f"{gray} of {total}"))
     lines = [f"desktop: {width}x{height}"]
     ok = True
     for name, passed, detail in checks:
@@ -236,6 +272,7 @@ def main():
     ap.add_argument("--splash", help="take a screendump at the luks prompt, check it, save it as this png")
     ap.add_argument("--desktop", help="take a screendump of the session, check it, save it as this png")
     ap.add_argument("--desktop-timeout", type=int, default=60, help="seconds for umbra to paint its first frame")
+    ap.add_argument("--corona", action="store_true", help="expect corona's panel on the desktop")
     args = ap.parse_args()
     with open(args.passfile, encoding="utf-8") as f:
         passphrase = f.read()
@@ -408,7 +445,7 @@ def main():
                 width, height, rgb = screendump(args.qmp, work, "desktop")
             except (OSError, RuntimeError) as e:
                 fail(f"screendump: {e}")
-            good, lines = check_desktop(width, height, rgb)
+            good, lines = check_desktop(width, height, rgb, corona=args.corona)
             if good or time.monotonic() > desktop_deadline:
                 break
             time.sleep(5)
@@ -417,6 +454,15 @@ def main():
         if not good:
             fail(f"the desktop is not on screen, see {args.desktop}")
         ok("desktop")
+
+        # 5a. the compositor knows corona's surface too. the session's ipc socket is in the
+        # owner's runtime directory, the serial shell runs as the owner
+        if args.corona:
+            child.send("set -x NIRI_SOCKET (ls -t /run/user/(id -u)/niri.wayland-1.*.sock | head -n1); umbra msg --json layers\r")
+            if expect([r'"namespace":\s*"corona"', PROMPT], "corona in umbra's layer surfaces") == 1:
+                fail("umbra lists no layer surface named corona")
+            expect([PROMPT], "the prompt")
+            ok("corona panel")
 
     # 6. down
     child.send("sudo systemctl poweroff\r")

@@ -85,6 +85,12 @@
             pname = "eclipse";
             version = "0.1.0";
             cargoExtraArgs = firstParty;
+            # corona's panel links the wayland client library and xkbcommon
+            nativeBuildInputs = lib.optionals pkgs.stdenv.isLinux [ pkgs.pkg-config ];
+            buildInputs = lib.optionals pkgs.stdenv.isLinux [
+              pkgs.wayland
+              pkgs.libxkbcommon
+            ];
           };
           cargoArtifacts = craneLib.buildDepsOnly common;
           # every first-party binary except umbra in one package
