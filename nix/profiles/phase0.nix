@@ -1,11 +1,38 @@
 # phase 0: it boots. console, shell, splash, aura's backend if a model is there. no compositor yet.
-{ ... }:
+{ config, ... }:
 {
   boot.kernelParams = [
     "console=ttyS0,115200"
     "console=tty1"
+    # plymouth drops to its text mode on every console as soon as it sees a serial one
+    "plymouth.ignore-serial-consoles"
   ];
   services.getty.autologinUser = "eclipse";
+
+  # the luks prompt also on the serial console. systemd's console agent stays out of plymouth's way
+  # by default, so it runs on ttyS0 only and leaves tty1 to the splash.
+  boot.initrd.systemd.paths.systemd-ask-password-console.wantedBy = [ "sysinit.target" ];
+  boot.initrd.systemd.services.systemd-ask-password-console = {
+    overrideStrategy = "asDropin";
+    unitConfig.ConditionPathExists = "";
+    serviceConfig.ExecStart = [
+      ""
+      "${config.boot.initrd.systemd.package}/bin/systemd-tty-ask-password-agent --watch --console=/dev/ttyS0"
+    ];
+  };
+
+  # the journal is mirrored to the serial console: the boot test reads it, nothing else can yet
+  boot.initrd.systemd.contents."/etc/systemd/journald.conf".text = ''
+    [Journal]
+    ForwardToConsole=yes
+    TTYPath=/dev/ttyS0
+    MaxLevelConsole=info
+  '';
+  services.journald.settings.Journal = {
+    ForwardToConsole = true;
+    TTYPath = "/dev/ttyS0";
+    MaxLevelConsole = "info";
+  };
 
   eclipse.totality.enable = true;
   eclipse.syzygy.enable = true;

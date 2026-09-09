@@ -15,6 +15,9 @@ let
     installPhase = ''
       mkdir -p $out/share/plymouth/themes/totality
       cp -r $src/. $out/share/plymouth/themes/totality/
+      # the theme file names its own location. the initrd copy only rewrites store paths
+      substituteInPlace $out/share/plymouth/themes/totality/totality.plymouth \
+        --replace-fail /usr/share/plymouth/themes/totality $out/share/plymouth/themes/totality
     '';
   };
 in
