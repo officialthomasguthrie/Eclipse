@@ -1,3 +1,3 @@
 # site/
 
-the website, later. astro, static.
+The website, later. Astro, static.

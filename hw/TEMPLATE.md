@@ -4,13 +4,13 @@
 |---|---|
 | Date | YYYY-MM-DD |
 | Eclipse version | |
-| Drive | class (cheap stick / ssd-class stick / nvme enclosure), model |
-| Firmware | uefi version, secure boot state |
+| Drive | Class (cheap stick, SSD-class stick, NVMe enclosure), model |
+| Firmware | UEFI version, Secure Boot state |
 | CPU | |
 | RAM | |
 | GPU | |
-| Wi-Fi | chipset |
-| Display(s) | resolution, physical size, scale chosen |
+| Wi-Fi | Chipset |
+| Display(s) | Resolution, physical size, scale chosen |
 
 ## Verdict
 
@@ -20,6 +20,6 @@ Boots: yes / no. Power-on to shell: NN s.
 
 ## What didn't
 
-## Notes for syzygy
+## Notes for Syzygy
 
-quirks worth remembering for this host (keyboard, touchpad, dpi, audio, suspend)
+Quirks worth remembering for this host (keyboard, touchpad, DPI, audio, suspend).

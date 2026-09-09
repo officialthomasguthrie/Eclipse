@@ -1,13 +1,13 @@
-# umbra
+# Umbra
 
-the compositor. it starts life as a hard fork of niri (gpl-3.0, rust, smithay) and diverges from there.
+The compositor. It starts life as a hard fork of niri (GPL-3.0, Rust, Smithay) and diverges from there.
 
-empty on purpose until then. to bring the fork in:
+Empty on purpose until then. To bring the fork in:
 
     git subtree add --prefix crates/umbra https://github.com/YaLTeR/niri main --squash
 
-then add crates/umbra to the workspace members, rename the binary to umbra, and point
+Then add crates/umbra to the workspace members, rename the binary to umbra, and point
 nix/modules/umbra.nix at it instead of the nixpkgs niri stand-in.
 
-what gets added, in order: output profiles from syzygy, the session journal for teleport, private
-protocols for corona and aura, the quake console, the lock screen, the ghost mode banner.
+What gets added, in order: output profiles from Syzygy, the session journal for teleport, private
+protocols for Corona and Aura, the quake console, the lock screen, the Ghost mode banner.
