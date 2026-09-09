@@ -49,7 +49,11 @@ in
     systemd.services.aura-inference = {
       description = "Aura inference backend (llama-server)";
       wantedBy = [ "multi-user.target" ];
-      unitConfig.ConditionPathExists = "${cfg.modelsDir}/${cfg.model}";
+      # the condition is checked when the unit starts, so it has to run after the mount
+      unitConfig = {
+        RequiresMountsFor = [ cfg.modelsDir ];
+        ConditionPathExists = "${cfg.modelsDir}/${cfg.model}";
+      };
       serviceConfig = {
         ExecStart = lib.concatStringsSep " " [
           "${cfg.package}/bin/llama-server"

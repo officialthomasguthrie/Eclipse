@@ -2,17 +2,24 @@
 # formats one partition as the persist volume: luks2 around btrfs, one subvolume per kind of personal data.
 # flash.sh runs this on a stick, persist-image.sh on a loop device for the boot test.
 #
-# Usage: sudo tools/mkpersist.sh <partition> [passfile]
+# Usage: sudo tools/mkpersist.sh [--models <dir>] <partition> [passfile]
 # Without a passfile cryptsetup asks for a passphrase. A passfile means a throwaway test volume: the
 # passphrase is the file's exact contents (no trailing newline) and key derivation is set to the
-# cheapest settings so a small vm can open it quickly.
+# cheapest settings so a small vm can open it quickly. --models copies every file in <dir> into the
+# @models subvolume, so Aura has weights on first boot.
 set -euo pipefail
 
+models=""
+if [[ ${1:-} == --models ]]; then
+  models=${2:?--models needs a directory}
+  shift 2
+fi
 part=${1:?partition}
 passfile=${2:-}
 name=${PERSIST_NAME:-persist}
 
 [[ -b "$part" ]] || { echo "not a block device: $part" >&2; exit 1; }
+[[ -z "$models" || -d "$models" ]] || { echo "not a directory: $models" >&2; exit 1; }
 for tool in cryptsetup mkfs.btrfs btrfs; do
   command -v "$tool" >/dev/null || { echo "missing tool: $tool" >&2; exit 1; }
 done
@@ -41,6 +48,14 @@ head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$mnt/@var/lib/eclipse/mac
 echo >> "$mnt/@var/lib/eclipse/machine-id"
 mkdir -p "$mnt/@home/eclipse"
 chown 1000:100 "$mnt/@home/eclipse"
+if [[ -n "$models" ]]; then
+  echo ">> Copying models from $models"
+  for f in "$models"/*; do
+    [[ -f "$f" ]] || continue
+    install -m 644 "$f" "$mnt/@models/"
+    echo "   $(basename "$f")"
+  done
+fi
 umount "$mnt"
 rmdir "$mnt"
 cryptsetup close "$name"

@@ -6,6 +6,22 @@ schema = 1
 
 # chat, tiered by host memory. syzygy picks, user can override
 
+# the smallest one exists for the boot test in ci: it fits a 4G vm and answers in seconds.
+# test = true marks it, nothing ships it. q8 because that is the only quant qwen publishes for it
+[[chat]]
+id = "qwen3-0.6b-q8_0"
+family = "qwen3"
+parameters = "0.6B"
+quant = "Q8_0"
+file = "Qwen3-0.6B-Q8_0.gguf"
+url = "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf"
+sha256 = "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031"
+size_gb = 0.64
+license = "Apache-2.0"
+shipped = false
+test = true
+tier = { min_ram_gb = 2, min_vram_gb = 0 }
+
 [[chat]]
 id = "qwen3-1.7b-q4_k_m"
 family = "qwen3"

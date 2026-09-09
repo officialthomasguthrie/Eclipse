@@ -42,6 +42,8 @@
   eclipse.totality.enable = true;
   eclipse.syzygy.enable = true;
   eclipse.aura.enable = true;
+  # the smallest chat model in the manifest. the boot test copies it into @models before boot
+  eclipse.aura.model = "Qwen3-0.6B-Q8_0.gguf";
   eclipse.umbra.enable = false;
   eclipse.corona.enable = false;
   eclipse.penumbra.enable = false;

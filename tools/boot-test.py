@@ -2,13 +2,17 @@
 """Boots an image through the flake's vm app and checks that the system comes up. The boot job in ci
 runs this.
 
-Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--timeout 300] [--log serial.log] [--splash splash.png]
+Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeout 300] [--log serial.log]
+       [--splash splash.png]
 
 <eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds the persist
 partition to the image with the passphrase from the passfile (persist-image.sh, through sudo), then
 boots the image as an nvme drive. Everything goes through the serial console: the luks prompt, the
 autologin shell, a few commands, the host profile syzygy wrote. The serial output is printed as it
 arrives and kept in the log file.
+
+With --models the files in that directory go into the @models subvolume before boot, and the test
+waits for aura-inference to load the model and asks the local api for a short completion.
 
 With --splash the test also takes a screendump through the qemu monitor while the luks prompt is up
 and checks that the Totality splash is on screen: the light disc and the black disc from
@@ -188,7 +192,9 @@ def main():
     ap.add_argument("vm", help="the eclipse-vm program from nix build .#vm")
     ap.add_argument("image", help="a raw image without a persist partition yet")
     ap.add_argument("passfile")
+    ap.add_argument("--models", help="directory with gguf files for the models subvolume, enables the aura check")
     ap.add_argument("--timeout", type=int, default=300, help="seconds for the whole boot")
+    ap.add_argument("--aura-timeout", type=int, default=120, help="seconds for aura to load the model")
     ap.add_argument("--log", default="serial.log")
     ap.add_argument("--memory", default="4096")
     ap.add_argument("--qmp", help="unix socket for the qemu monitor")
@@ -214,6 +220,8 @@ def main():
         "-serial", "stdio",
         "-no-reboot",
     ]
+    if args.models:
+        cmd[5:5] = ["--models", os.path.abspath(args.models)]
     if args.qmp:
         cmd += ["-qmp", f"unix:{args.qmp},server,nowait"]
     print("boot-test: " + " ".join(cmd), flush=True)
@@ -317,7 +325,38 @@ def main():
         fail(f"the profile says class {klass}, expected borrowed")
     ok(f"host profile {fingerprint[:12]}, class {klass}, vendor {vendor}")
 
-    # 4. down
+    # 4. aura's backend found the model and answers on localhost. the unit is active as soon as
+    # llama-server runs, loading takes longer, so poll its health endpoint
+    if args.models:
+        child.send("systemctl is-active aura-inference\r")
+        expect([r"(?<![\w-])(active|inactive|failed|activating)\s"], "the aura-inference unit state")
+        state = child.match.group(1)
+        expect([PROMPT], "the prompt")
+        if state not in ("active", "activating"):
+            fail(f"aura-inference.service is {state}, expected active")
+
+        api = "localhost:11434"
+        aura_deadline = time.monotonic() + args.aura_timeout
+        while True:
+            child.send(f"curl -s -o /dev/null -w 'health=%{{http_code}}\\n' {api}/health\r")
+            expect([r"health=(\d{3})\s"], "the aura health code")
+            code = child.match.group(1)
+            expect([PROMPT], "the prompt")
+            if code == "200":
+                break
+            if time.monotonic() > aura_deadline:
+                fail(f"aura did not load the model within {args.aura_timeout}s, last health code {code}")
+            time.sleep(5)
+        ok("aura loaded the model")
+
+        body = '{"prompt":"The capital of France is","n_predict":4}'
+        child.send(f"curl -s {api}/completion -d '{body}'\r")
+        expect([r'"content":"([^"]+)"'], "a completion with text in it")
+        content = child.match.group(1)
+        expect([PROMPT], "the prompt")
+        ok(f"aura answered {content!r}")
+
+    # 5. down
     child.send("sudo systemctl poweroff\r")
     try:
         child.expect(pexpect.EOF, timeout=90)

@@ -115,18 +115,21 @@
               ];
               text = ''
                 usage() {
-                  echo "usage: eclipse-vm [--image file.raw] [--persist passfile] [qemu options]" >&2
+                  echo "usage: eclipse-vm [--image file.raw] [--persist passfile] [--models dir] [qemu options]" >&2
                   echo "  --image    the raw image to boot. a read-only file is copied first" >&2
                   echo "  --persist  add the persist partition with the passphrase in this file (sudo)" >&2
+                  echo "  --models   copy the files in this directory into the models subvolume (with --persist)" >&2
                   echo "  the rest goes to qemu after the defaults, so later -m, -smp, -cpu win." >&2
                   echo "  -serial and -display are only set when you pass none" >&2
                 }
                 image=""
                 persist=""
+                models=""
                 while [ $# -gt 0 ]; do
                   case $1 in
                     --image) image=''${2:?--image needs a file}; shift 2 ;;
                     --persist) persist=''${2:?--persist needs a passfile}; shift 2 ;;
+                    --models) models=''${2:?--models needs a directory}; shift 2 ;;
                     -h|--help) usage; exit 0 ;;
                     --) shift; break ;;
                     *) break ;;
@@ -134,6 +137,10 @@
                 done
                 [ -n "$image" ] || { usage; exit 1; }
                 [ -f "$image" ] || { echo "eclipse-vm: no such image: $image" >&2; exit 1; }
+                if [ -n "$models" ]; then
+                  [ -n "$persist" ] || { echo "eclipse-vm: --models needs --persist" >&2; exit 1; }
+                  [ -d "$models" ] || { echo "eclipse-vm: no such directory: $models" >&2; exit 1; }
+                fi
 
                 work=$(mktemp -d -t eclipse-vm.XXXXXX)
                 qemu=""
@@ -161,7 +168,11 @@
 
                 if [ -n "$persist" ]; then
                   echo "eclipse-vm: adding the persist partition through a loop device, sudo may ask for your password" >&2
-                  sudo env PATH="$PATH" ${./tools}/persist-image.sh "$image" "$persist"
+                  if [ -n "$models" ]; then
+                    sudo env PATH="$PATH" ${./tools}/persist-image.sh --models "$models" "$image" "$persist"
+                  else
+                    sudo env PATH="$PATH" ${./tools}/persist-image.sh "$image" "$persist"
+                  fi
                 fi
 
                 args=(-machine q35 -smp 4 -m 4096)

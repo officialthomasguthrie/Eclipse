@@ -118,11 +118,34 @@ jobs:
       - name: Open kvm to the runner
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; ls -l /dev/kvm; else echo "no /dev/kvm, qemu will use tcg"; fi
+      - name: Read the test model from the manifest
+        id: model
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import tomllib
+          with open("models/manifest.toml", "rb") as f:
+              manifest = tomllib.load(f)
+          [model] = [m for m in manifest["chat"] if m.get("test")]
+          for key in ("file", "url", "sha256"):
+              print(f"{key}={model[key]}")
+          EOF
+      - name: Cache the test model
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: models/cache
+          key: model-${{ steps.model.outputs.sha256 }}
+      - name: Download the test model
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: curl -fL --retry 3 --create-dirs -o "models/cache/${{ steps.model.outputs.file }}" "${{ steps.model.outputs.url }}"
+      - name: Check the test model
+        run: echo "${{ steps.model.outputs.sha256 }}  models/cache/${{ steps.model.outputs.file }}" | sha256sum -c
       - name: Boot
         run: |
           zstd -d --rm eclipse.raw.zst -o eclipse.raw
           printf 'eclipse-test' > pass.txt
-          python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw pass.txt --log serial.log --splash splash.png
+          python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw pass.txt --models models/cache \
+            --log serial.log --splash splash.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:
