@@ -55,6 +55,10 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'pull_request' }}
     timeout-minutes: 120
+    permissions:
+      contents: read
+      # the drop step below deletes the images older runs left behind
+      actions: write
     steps:
       - name: Free disk space
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -92,6 +96,19 @@ jobs:
           img=$(ls result/*.raw | head -n1)
           zstd -T0 -12 "$img" -o eclipse.raw.zst
           ls -la result/ eclipse.raw.zst
+      - name: Drop the images older runs left
+        # each one is 2G and the account has a storage quota. the upload below replaces them, so
+        # only this run's image is kept. without this the upload fails with "storage quota has
+        # been hit" and the boot job never runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts" --paginate \
+            --jq '.artifacts[] | select(.expired == false) | select(.name | startswith("eclipse-image-")) | "\(.created_at) \(.id)"' \
+            | while read -r created id; do
+            echo "dropping artifact $id from $created"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" || true
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: eclipse-image-${{ github.sha }}
