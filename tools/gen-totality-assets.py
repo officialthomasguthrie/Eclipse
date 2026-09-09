@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Boot splash assets (sun, moon, corona), stdlib only.
+"""Boot splash assets (sun, moon, dot), stdlib only.
 
 Usage: gen-totality-assets.py [output-dir]   (default: nix/totality/plymouth)
+
+The sun is a light gray disc, the moon a black one a little smaller, so what is left at totality
+is a black disc with a thin ring. The dot is one bullet of the passphrase field. The script scales
+all three to the screen, so the pngs are drawn large.
 """
 
 import math
@@ -10,8 +14,10 @@ import struct
 import sys
 import zlib
 
-BG = (12, 10, 17)  # background, #0c0a11
-GOLD = (228, 185, 110)  # #e4b96e
+SIZE = 512
+RING = 0.03  # ring width as a fraction of the sun's diameter
+GRAY = (204, 204, 204)  # #cccccc, the sun and the text
+BLACK = (0, 0, 0)  # the moon
 
 
 def write_png(path: pathlib.Path, width: int, height: int, pixel) -> None:
@@ -39,34 +45,13 @@ def write_png(path: pathlib.Path, width: int, height: int, pixel) -> None:
     path.write_bytes(png)
 
 
-def disc(color, size: int, feather: float = 1.5):
-    """Anti-aliased filled circle."""
-    radius = size / 2 - 2
+def disc(color, size: int, radius: float):
+    """Anti-aliased filled circle in the middle of a size x size canvas."""
     centre = size / 2 - 0.5
 
     def pixel(x: int, y: int):
         d = math.hypot(x - centre, y - centre)
-        alpha = max(0.0, min(1.0, (radius - d) / feather + 0.5))
-        return (*color, round(alpha * 255))
-
-    return pixel
-
-
-def glow(color, size: int):
-    """Soft radial glow for the corona."""
-    centre = size / 2 - 0.5
-    inner = size * 0.21
-    outer = size * 0.5
-
-    def pixel(x: int, y: int):
-        d = math.hypot(x - centre, y - centre)
-        if d <= inner:
-            alpha = 0.55
-        elif d >= outer:
-            alpha = 0.0
-        else:
-            t = (d - inner) / (outer - inner)
-            alpha = 0.55 * (1 - t) ** 2.2
+        alpha = max(0.0, min(1.0, radius - d + 0.5))
         return (*color, round(alpha * 255))
 
     return pixel
@@ -75,10 +60,11 @@ def glow(color, size: int):
 def main() -> None:
     out = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "nix/totality/plymouth")
     out.mkdir(parents=True, exist_ok=True)
-    write_png(out / "sun.png", 320, 320, disc(GOLD, 320))
-    write_png(out / "moon.png", 320, 320, disc(BG, 320, feather=1.0))
-    write_png(out / "corona.png", 760, 760, glow(GOLD, 760))
-    for name in ("sun.png", "moon.png", "corona.png"):
+    sun = SIZE / 2 - 1
+    write_png(out / "sun.png", SIZE, SIZE, disc(GRAY, SIZE, sun))
+    write_png(out / "moon.png", SIZE, SIZE, disc(BLACK, SIZE, sun - RING * SIZE))
+    write_png(out / "dot.png", 64, 64, disc(GRAY, 64, 31))
+    for name in ("sun.png", "moon.png", "dot.png"):
         print(f"{out / name}: {(out / name).stat().st_size} bytes")
 
 

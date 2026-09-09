@@ -1,6 +1,6 @@
 [Plymouth Theme]
 Name=Totality
-Description=The moon crosses the sun as Eclipse boots. Totality is the desktop.
+Description=A black disc crosses a light one while Eclipse boots. Totality is the desktop.
 ModuleName=script
 
 [script]

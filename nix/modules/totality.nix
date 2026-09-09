@@ -1,5 +1,5 @@
-# boot splash. the moon crosses the sun while the initrd runs, totality is when the session takes the display.
-# the luks prompt sits under the sun.
+# boot splash. a black disc crosses a light one while the initrd runs, totality is when the session
+# takes the display. the luks prompt sits under the disc. tools/boot-test.py checks the screen.
 {
   config,
   lib,
