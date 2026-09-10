@@ -49,6 +49,12 @@ import pexpect
 # the fish prompt is user@host with colour codes in between
 PROMPT = r"eclipse(\x1b\[[0-9;]*m)*@(\x1b\[[0-9;]*m)*eclipse"
 PASSPHRASE = r"(?i)passphrase[^\r\n]*:"
+# fish marks every command line it runs: osc 133;C when it starts and 133;D;<status> when it is
+# done. it also repaints the prompt whenever the journal writes to the console, so a prompt is not
+# where a command's output ends, these marks are
+COMMAND_START = r"\x1b\]133;C[^\x07\x1b]*(?:\x07|\x1b\\)"
+COMMAND_END = r"\x1b\]133;D;(\d+)(?:\x07|\x1b\\)"
+ESCAPES = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?>=]*[A-Za-z]|\x1b[=>]")
 
 
 def first(paths):
@@ -347,6 +353,15 @@ def main():
     def ok(what):
         print(f"\nboot-test: {what} at {since()}", flush=True)
 
+    def run(command, what):
+        """Run one command line in the serial shell. Returns its exit status and what it printed,
+        without escape codes and carriage returns."""
+        child.send(command + "\r")
+        expect([COMMAND_START], f"the shell to start {what}")
+        expect([COMMAND_END], what)
+        status = int(child.match.group(1))
+        return status, ESCAPES.sub("", child.before).replace("\r", "")
+
     # 1. the luks prompt, answered over serial. a second prompt means the passphrase was refused.
     expect([PASSPHRASE], "the luks passphrase prompt")
     ok("passphrase prompt")
@@ -498,31 +513,28 @@ def main():
     # llama-server as its child and answers on the system bus. the name is there before the model
     # has loaded, so poll the State property
     if args.models:
-        child.send("systemctl is-active aura\r")
-        expect([r"(?<![\w-])(active|inactive|failed|activating)\s"], "the aura unit state")
-        state = child.match.group(1)
-        expect([PROMPT], "the prompt")
+        _, output = run("systemctl is-active aura", "the aura unit state")
+        state = re.search(r"(?<![\w-])(active|inactive|failed|activating)\s", output)
+        state = state.group(1) if state else output.strip()
         if state not in ("active", "activating"):
             fail(f"aura.service is {state}, expected active")
 
         aura, aura_path = "dev.eclipse.Aura", "/dev/eclipse/Aura"
 
-        def aura_prop(name, pattern):
-            """A property of aura's, or None when the bus gave no answer."""
-            child.send(f"busctl --system get-property {aura} {aura_path} {aura} {name}\r")
-            if expect([pattern, PROMPT], f"aura's {name} property") == 1:
-                return None
-            value = child.match.group(1)
-            expect([PROMPT], "the prompt")
-            return value
+        def aura_prop(name):
+            """A string property of aura's, or None when the bus gave no answer."""
+            status, output = run(f"busctl --system get-property {aura} {aura_path} {aura} {name}",
+                                 f"aura's {name} property")
+            value = re.search(r's "([^"\n]*)"', output)
+            return value.group(1) if status == 0 and value else None
 
         aura_deadline = time.monotonic() + args.aura_timeout
         while True:
-            aura_state = aura_prop("State", r's "(\w+)"\s')
+            aura_state = aura_prop("State")
             if aura_state == "ready":
                 break
             if aura_state in ("none", "failed") or time.monotonic() > aura_deadline:
-                why = aura_prop("Error", r's "([^\r\n]*)"\s')
+                why = aura_prop("Error")
                 fail(f"aura is {aura_state or 'not on the bus'} after {since()}: {why}")
             time.sleep(5)
 
@@ -532,8 +544,8 @@ def main():
             chat = tomllib.load(f)["chat"]
         on_drive = set(os.listdir(args.models))
         wanted_model = [m["id"] for m in chat if m["file"] in on_drive]
-        aura_tier = aura_prop("Tier", r's "(\w*)"\s')
-        aura_model = aura_prop("Model", r's "([\w.-]*)"\s')
+        aura_tier = aura_prop("Tier")
+        aura_model = aura_prop("Model")
         ok(f"aura loaded {aura_model} for tier {aura_tier}")
         if aura_tier != ai_tier:
             fail(f"aura says the tier is {aura_tier}, syzygy says {ai_tier}")
@@ -542,28 +554,27 @@ def main():
 
         # the local api that other programs use is the same server
         api = "localhost:11434"
-        child.send(f"curl -s -o /dev/null -w 'health=%{{http_code}}\\n' {api}/health\r")
-        expect([r"health=(\d{3})\s"], "the aura health code")
-        code = child.match.group(1)
-        expect([PROMPT], "the prompt")
-        if code != "200":
-            fail(f"the local api says {code} on /health, but aura says the model is ready")
+        _, output = run(f"curl -s -o /dev/null -w 'health=%{{http_code}}\\n' {api}/health", "the aura health code")
+        code = re.search(r"health=(\d{3})", output)
+        if not code or code.group(1) != "200":
+            fail(f"the local api says {output.strip()!r} on /health, but aura says the model is ready")
 
         body = '{"prompt":"The capital of France is","n_predict":4}'
-        child.send(f"curl -s {api}/completion -d '{body}'\r")
-        expect([r'"content":"([^"]+)"'], "a completion with text in it")
-        content = child.match.group(1)
-        expect([PROMPT], "the prompt")
-        ok(f"the local api completed {content!r}")
+        _, output = run(f"curl -s {api}/completion -d '{body}'", "a completion")
+        content = re.search(r'"content":"([^"]+)"', output)
+        if not content:
+            fail(f"the local api gave no completion: {output.strip()!r}")
+        ok(f"the local api completed {content.group(1)!r}")
 
         # and the question over the bus, as the owner, no sudo. busctl's json keeps the answer on
         # one line with its quotes escaped
         question = "What is the capital of France?"
-        child.send(f"busctl --system --json=short --timeout=120 call {aura} {aura_path} {aura} Ask s '{question}'\r")
-        if expect([r'"data":\["((?:[^"\\]|\\.)+)"\]\}', PROMPT], "aura's answer on the bus") == 1:
-            fail("Ask on the bus gave no answer, the reason is in the serial log above")
-        answer = json.loads('"' + child.match.group(1) + '"')
-        expect([PROMPT], "the prompt")
+        _, output = run(f"busctl --system --json=short --timeout=120 call {aura} {aura_path} {aura} Ask s '{question}'",
+                        "aura's answer on the bus")
+        answer = re.search(r'"data":\["((?:[^"\\]|\\.)+)"\]\}', output)
+        if not answer:
+            fail(f"Ask on the bus gave no answer: {output.strip()!r}")
+        answer = json.loads('"' + answer.group(1) + '"')
         ok(f"aura answered {question!r} on the bus with {answer!r}")
 
     # 5. the desktop. greetd runs umbra on tty1 as the owner. umbra needs a moment to open the gpu
@@ -599,10 +610,10 @@ def main():
         # 5a. the compositor knows corona's surface too. the session's ipc socket is in the
         # owner's runtime directory, the serial shell runs as the owner
         if args.corona:
-            child.send("set -x NIRI_SOCKET (ls -t /run/user/(id -u)/niri.wayland-1.*.sock | head -n1); umbra msg --json layers\r")
-            if expect([r'"namespace":\s*"corona"', PROMPT], "corona in umbra's layer surfaces") == 1:
+            _, output = run("set -x NIRI_SOCKET (ls -t /run/user/(id -u)/niri.wayland-1.*.sock | head -n1); umbra msg --json layers",
+                            "umbra's layer surfaces")
+            if not re.search(r'"namespace":\s*"corona"', output):
                 fail("umbra lists no layer surface named corona")
-            expect([PROMPT], "the prompt")
             ok("corona panel")
 
             # 5b. the field takes a line from the terminal, over the socket in the session's
