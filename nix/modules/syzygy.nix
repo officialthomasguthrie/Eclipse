@@ -1,5 +1,5 @@
-# syzygy: host adaptation. runs before the session, fingerprints the host, loads or creates its profile,
-# publishes it on d-bus. for now it only writes the profile under the hosts directory.
+# syzygy: host adaptation. runs before the session, works out what the machine is, writes its
+# profile under the hosts directory, then answers on the system bus as dev.eclipse.Syzygy.
 {
   config,
   lib,
@@ -9,6 +9,27 @@
 }:
 let
   cfg = config.eclipse.syzygy;
+  busName = "dev.eclipse.Syzygy";
+  # the interface is read only, so anyone on the machine may read it. only root owns the name.
+  policy = pkgs.writeTextFile {
+    name = "syzygy-dbus-policy";
+    destination = "/share/dbus-1/system.d/${busName}.conf";
+    text = ''
+      <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+       "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+      <busconfig>
+        <policy user="root">
+          <allow own="${busName}"/>
+        </policy>
+        <policy context="default">
+          <allow send_destination="${busName}" send_interface="${busName}"/>
+          <allow send_destination="${busName}" send_interface="org.freedesktop.DBus.Properties"/>
+          <allow send_destination="${busName}" send_interface="org.freedesktop.DBus.Introspectable"/>
+          <allow send_destination="${busName}" send_interface="org.freedesktop.DBus.Peer"/>
+        </policy>
+      </busconfig>
+    '';
+  };
 in
 {
   options.eclipse.syzygy = {
@@ -26,6 +47,8 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    services.dbus.packages = [ policy ];
+
     systemd.services.syzygy = {
       description = "Syzygy host adaptation";
       wantedBy = [ "multi-user.target" ];
@@ -33,17 +56,25 @@ in
         "display-manager.service"
         "getty@tty1.service"
       ];
-      after = [ "local-fs.target" ];
+      requires = [ "dbus.service" ];
+      after = [
+        "local-fs.target"
+        "dbus.service"
+      ];
       unitConfig.RequiresMountsFor = cfg.hostsDir;
       serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        ExecStart = "${cfg.package}/bin/syzygy --hosts-dir ${cfg.hostsDir}";
+        # the profile is written before the name is taken, so anything that waits for the name
+        # on the bus already has the answers when it arrives
+        Type = "dbus";
+        BusName = busName;
+        ExecStart = "${cfg.package}/bin/syzygy --hosts-dir ${cfg.hostsDir} --serve";
+        Restart = "on-failure";
         # reads /sys, writes only the hosts directory
         ProtectSystem = "strict";
         ReadWritePaths = [ cfg.hostsDir ];
         ProtectHome = true;
         PrivateTmp = true;
+        # the bus is a unix socket, so it is still there without a network
         PrivateNetwork = true;
         NoNewPrivileges = true;
       };
