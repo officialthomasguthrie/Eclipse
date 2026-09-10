@@ -451,7 +451,7 @@ def main():
 
     # the bus. the interface is read only, so the owner reads it without sudo
     bus, obj = "dev.eclipse.Syzygy", "/dev/eclipse/Syzygy"
-    if count("bus", f"busctl --system list --no-pager --no-legend | grep -c '^{bus} '") != 1:
+    if count("bus", f"busctl --system list --no-pager --no-legend | grep -c '^{bus}'") != 1:
         fail(f"{bus} is not on the system bus")
 
     def prop(name, pattern):
