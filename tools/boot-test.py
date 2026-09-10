@@ -422,9 +422,10 @@ def main():
     file_ai_tier = child.match.group(1)
     expect([r'connector = "([\w-]+)"'], "the output in the profile")
     file_connector = child.match.group(1)
-    expect([r"width = (\d+)"], "the output width in the profile")
+    # a number with nothing after it matches as soon as its first digits arrive
+    expect([r"width = (\d+)\s"], "the output width in the profile")
     file_width = child.match.group(1)
-    expect([r"height = (\d+)"], "the output height in the profile")
+    expect([r"height = (\d+)\s"], "the output height in the profile")
     file_height = child.match.group(1)
     expect([PROMPT], "the prompt")
 
