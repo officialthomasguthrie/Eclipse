@@ -62,6 +62,20 @@ impl Host {
             .zip(self.dmi.iter().map(String::as_str))
     }
 
+    /// The machine in words, for whoever opens the profile. Empty DMI reads as unknown.
+    #[must_use]
+    pub fn label(&self) -> String {
+        let words: Vec<&str> = [self.dmi[0].as_str(), self.dmi[1].as_str()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect();
+        if words.is_empty() {
+            "unknown machine".to_owned()
+        } else {
+            words.join(" ")
+        }
+    }
+
     /// SHA-256 over the DMI fields and the sorted PCI ids, as hex. Two machines of the same model
     /// with the same cards get the same fingerprint; the serial number is left out on purpose.
     #[must_use]
@@ -82,6 +96,64 @@ impl Host {
     }
 }
 
+/// A machine with a battery is a laptop.
+pub const LAPTOP: &str = "laptop";
+/// Anything else is a desktop.
+pub const DESKTOP: &str = "desktop";
+
+/// The AI tiers, smallest first. Syzygy picks one from memory; a person can override it.
+pub const TIERS: [&str; 3] = ["small", "medium", "large"];
+
+/// Kibibytes in a gibibyte.
+const GIB: u64 = 1024 * 1024;
+
+/// Laptop or desktop, from the power supplies the running machine has.
+#[must_use]
+pub fn chassis() -> &'static str {
+    chassis_from(Path::new("/sys/class/power_supply"))
+}
+
+/// [`LAPTOP`] when one of the power supplies under `dir` is a battery.
+#[must_use]
+pub fn chassis_from(dir: &Path) -> &'static str {
+    let battery = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| read_trimmed(&entry.path().join("type")) == "Battery");
+    if battery { LAPTOP } else { DESKTOP }
+}
+
+/// The AI tier for the running machine.
+#[must_use]
+pub fn ai_tier() -> &'static str {
+    tier_for(memory_kib(Path::new("/proc/meminfo")))
+}
+
+/// The tier for a machine with `kib` kibibytes of memory. The thresholds sit under the round
+/// numbers on purpose: a 16 GB machine reports about 15.5 GiB once the firmware has had its share.
+#[must_use]
+pub fn tier_for(kib: u64) -> &'static str {
+    match kib {
+        kib if kib >= 15 * GIB => TIERS[2],
+        kib if kib >= 7 * GIB => TIERS[1],
+        _ => TIERS[0],
+    }
+}
+
+/// `MemTotal` from a meminfo file, in kibibytes. 0 when it cannot be read.
+#[must_use]
+pub fn memory_kib(meminfo: &Path) -> u64 {
+    fs::read_to_string(meminfo)
+        .unwrap_or_default()
+        .lines()
+        .find_map(|line| {
+            let rest = line.strip_prefix("MemTotal:")?;
+            rest.split_whitespace().next()?.parse().ok()
+        })
+        .unwrap_or(0)
+}
+
 fn read_trimmed(path: &Path) -> String {
     fs::read_to_string(path)
         .map(|s| s.trim().to_owned())
@@ -89,7 +161,7 @@ fn read_trimmed(path: &Path) -> String {
 }
 
 /// Turns sysfs's `0x8086` into `8086`. Anything that is not hex is dropped.
-fn hex_id(raw: &str) -> Option<String> {
+pub fn hex_id(raw: &str) -> Option<String> {
     let digits = raw.strip_prefix("0x").unwrap_or(raw);
     if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
@@ -167,6 +239,44 @@ mod tests {
         assert_eq!(host.dmi[1], "Standard PC");
         assert_eq!(host.dmi[2], "");
         assert_eq!(host.pci, vec!["1234:1111", "8086:29c0"]);
+    }
+
+    #[test]
+    fn a_laptop_has_a_battery() {
+        let root = std::env::temp_dir().join(format!("syzygy-power-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("AC")).unwrap();
+        fs::write(root.join("AC/type"), "Mains\n").unwrap();
+        assert_eq!(chassis_from(&root), DESKTOP);
+        fs::create_dir_all(root.join("BAT0")).unwrap();
+        fs::write(root.join("BAT0/type"), "Battery\n").unwrap();
+        assert_eq!(chassis_from(&root), LAPTOP);
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(chassis_from(Path::new("/nonexistent/power")), DESKTOP);
+    }
+
+    #[test]
+    fn tiers_come_from_memory() {
+        // the boot test gives the machine 4096 MB and linux keeps some of it
+        assert_eq!(tier_for(3_900_000), "small");
+        assert_eq!(tier_for(0), "small");
+        // 8 GB reports about 7.7 GiB, 16 GB about 15.5
+        assert_eq!(tier_for(8_100_000), "medium");
+        assert_eq!(tier_for(16_300_000), "large");
+        assert_eq!(tier_for(64 * 1024 * 1024), "large");
+    }
+
+    #[test]
+    fn meminfo_is_parsed() {
+        let path = std::env::temp_dir().join(format!("syzygy-meminfo-{}", std::process::id()));
+        fs::write(
+            &path,
+            "MemTotal:        3999504 kB\nMemFree:          123 kB\n",
+        )
+        .unwrap();
+        assert_eq!(memory_kib(&path), 3_999_504);
+        fs::remove_file(&path).unwrap();
+        assert_eq!(memory_kib(Path::new("/nonexistent/meminfo")), 0);
     }
 
     #[test]
