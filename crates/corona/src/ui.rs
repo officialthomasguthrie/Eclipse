@@ -11,6 +11,7 @@ use iced_layershell::actions::{LayerShellCustomAction, LayerShellCustomActionWit
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings};
 
+use crate::aura;
 use crate::control::{self, Command};
 use crate::launcher::{self, App};
 use crate::nu;
@@ -71,6 +72,8 @@ enum Results {
     Matches(Vec<App>),
     /// What a command or a pipeline printed.
     Output(Vec<String>),
+    /// Aura's answer, wrapped into rows.
+    Answer(Vec<String>),
 }
 
 impl Results {
@@ -78,7 +81,7 @@ impl Results {
         match self {
             Self::None => 0,
             Self::Matches(apps) => apps.len(),
-            Self::Output(lines) => lines.len(),
+            Self::Output(lines) | Self::Answer(lines) => lines.len(),
         }
     }
 
@@ -94,6 +97,7 @@ enum Message {
     Move(isize),
     Escape,
     Done(Result<String, String>),
+    Answered(Result<(String, String), String>),
     Typed(Command),
     Resize(u32),
 }
@@ -217,6 +221,7 @@ fn update(state: &mut Corona, message: Message) -> Task<Message> {
             finish(state, result);
             Task::none()
         }
+        Message::Answered(result) => answered(state, result),
         Message::Typed(command) => match command {
             Command::Type(words) => {
                 typed(state, words);
@@ -334,17 +339,7 @@ fn submit(state: &mut Corona) -> Task<Message> {
     match reading {
         Interpretation::Nothing => {}
         Interpretation::Launch(app) => launch(state, &app),
-        Interpretation::Os(action) if action.mutating => {
-            state.notice = Some(format!(
-                "{}? Press Enter to confirm or Escape to cancel.",
-                action.summary
-            ));
-            state.pending = Some(action);
-        }
-        Interpretation::Os(action) => {
-            state.input.clear();
-            return start(action);
-        }
+        Interpretation::Os(action) => return propose(state, action),
         Interpretation::Usage(usage) => {
             state.results = Results::None;
             state.error = Some(usage.to_string());
@@ -355,12 +350,72 @@ fn submit(state: &mut Corona) -> Task<Message> {
             state.error = None;
             return Task::perform(async move { nu::run(&line) }, Message::Done);
         }
-        Interpretation::Ask(_) => {
+        Interpretation::Ask(question) => {
+            state.input.clear();
             state.results = Results::None;
-            state.error = Some("Aura is not in this build yet.".into());
+            state.error = None;
+            state.notice = Some("Asking Aura".into());
+            return ask(question);
         }
     }
     Task::none()
+}
+
+/// An OS command, typed or proposed by Aura. One that changes something waits for a second Enter,
+/// the rest runs at once.
+fn propose(state: &mut Corona, action: Action) -> Task<Message> {
+    if action.mutating {
+        state.notice = Some(format!(
+            "{}? Press Enter to confirm or Escape to cancel.",
+            action.summary
+        ));
+        state.pending = Some(action);
+        return Task::none();
+    }
+    state.input.clear();
+    state.notice = None;
+    start(action)
+}
+
+/// The question goes to aurad on a thread of its own. An answer can take a minute, and the
+/// executor's few threads also carry the socket the terminal types on.
+fn ask(question: String) -> Task<Message> {
+    Task::perform(
+        async move {
+            let (sender, receiver) = iced::futures::channel::oneshot::channel();
+            std::thread::spawn(move || {
+                let _ = sender.send(aura::ask(&question));
+            });
+            receiver
+                .await
+                .unwrap_or_else(|_| Err("Aura stopped before it answered.".into()))
+        },
+        Message::Answered,
+    )
+}
+
+/// Aura's reply: an answer goes in the list, a command is handled like a typed one, anything
+/// else goes on the error line.
+fn answered(state: &mut Corona, result: Result<(String, String), String>) -> Task<Message> {
+    let reply = match result {
+        Ok((kind, text)) => aura::read(&kind, &text),
+        Err(why) => aura::Reply::Refused(why),
+    };
+    eprintln!("corona: aura -> {reply:?}");
+    state.notice = None;
+    state.error = None;
+    state.results = Results::None;
+    match reply {
+        aura::Reply::Answer(answer) => {
+            state.results = Results::Answer(aura::rows(&answer, ROWS));
+            Task::none()
+        }
+        aura::Reply::Action(action) => propose(state, action),
+        aura::Reply::Refused(why) => {
+            state.error = Some(why);
+            Task::none()
+        }
+    }
 }
 
 fn launch(state: &mut Corona, app: &App) {
@@ -450,7 +505,8 @@ fn view(state: &Corona) -> Element<'_, Message> {
         .into()
 }
 
-/// The rows under the field: the apps the words match, or what the last line printed.
+/// The rows under the field: the apps the words match, what the last line printed, or Aura's
+/// answer.
 fn list(state: &Corona) -> Element<'_, Message> {
     let mut rows = column![];
     match &state.results {
@@ -463,6 +519,11 @@ fn list(state: &Corona) -> Element<'_, Message> {
         Results::Output(lines) => {
             for output in lines {
                 rows = rows.push(entry(output, MONO, false));
+            }
+        }
+        Results::Answer(lines) => {
+            for answer in lines {
+                rows = rows.push(entry(answer, FONT, false));
             }
         }
     }

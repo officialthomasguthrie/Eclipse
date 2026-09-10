@@ -2,7 +2,7 @@
 """Boots an image through the flake's vm app and checks that the system comes up. The boot job in ci
 runs this.
 
-Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeout 300] [--log serial.log]
+Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeout 600] [--log serial.log]
        [--splash splash.png] [--desktop desktop.png] [--corona]
 
 <eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds the persist
@@ -28,6 +28,8 @@ layer surface with its namespace, and the screendump has the panel gray, the fie
 desktop gray below. The test then types into the field from the serial shell with `corona --enter`
 and looks again: a nushell pipeline puts three rows under the field, a command with arguments it does
 not know puts an error line there, and `corona --escape` leaves the panel the height it started at.
+With --models as well, a question goes through `corona --do`, which prints aura's answer, and then
+into the field, where the answer shows up as rows under it.
 """
 
 import argparse
@@ -155,10 +157,13 @@ FIELD_SIZE = (480, 24)
 ROW_HEIGHT = 22
 ERROR_HEIGHT = 22
 BOTTOM_PAD = 4
+LIST_ROWS = 8
 # what the field and the list ask corona to type, and how many rows the pipeline prints
 RESULT_LINE = "echo [eclipse eclipse eclipse]"
 RESULT_ROWS = 3
 ERROR_LINE = "wifi dance"
+# a question with a short answer. the model runs on the cpu, next to umbra's software renderer
+QUESTION = "What is the capital of France?"
 
 
 def near(pixel, color, tolerance):
@@ -216,7 +221,9 @@ def panel_height(rows, error):
 
 def check_desktop(width, height, rgb, corona=False, rows=0, error=False):
     """Count the desktop gray and the console's black in a screendump, and with corona the panel
-    along the top, the field in it and the result list under it. Returns (ok, lines to print)."""
+    along the top, the field in it and the result list under it. rows is a count, or (fewest, most)
+    when the test cannot know how many rows there are: then any count in that range that fits the
+    screen passes. Returns (ok, lines to print)."""
     gray = black = panel = field = 0
     panel_rows = 0
     for y in range(height):
@@ -242,19 +249,27 @@ def check_desktop(width, height, rgb, corona=False, rows=0, error=False):
         ("no console black", black <= 0.02 * total, f"{black} of {total}"),
     ]
     if corona:
-        # the compositor may scale the panel, so its size on screen gives the scale
-        wanted = panel_height(rows, error)
-        scale = panel_rows / wanted
-        # the field, and under it one field-gray rectangle as tall as the rows it holds
-        field_area = (FIELD_SIZE[0] * FIELD_SIZE[1] + FIELD_SIZE[0] * rows * ROW_HEIGHT) * scale * scale
         below = total - panel_rows * width
-        checks += [
-            ("the desktop background covers the rest", gray >= 0.95 * below, f"{gray} of {below}"),
-            ("the panel is as tall as its contents", 0.9 * wanted <= panel_rows <= 3 * wanted and panel >= 0.3 * panel_rows * width,
-             f"{panel_rows} rows, expected about {wanted}, {panel} panel pixels"),
-            ("the field and the list are in it", 0.6 * field_area <= field <= 1.1 * field_area,
-             f"{field}, expected about {field_area:.0f} at scale {scale:.2f}"),
-        ]
+
+        def panel_checks(count):
+            # the compositor may scale the panel, so its size on screen gives the scale
+            wanted = panel_height(count, error)
+            scale = panel_rows / wanted
+            # the field, and under it one field-gray rectangle as tall as the rows it holds
+            field_area = (FIELD_SIZE[0] * FIELD_SIZE[1] + FIELD_SIZE[0] * count * ROW_HEIGHT) * scale * scale
+            return wanted, [
+                ("the desktop background covers the rest", gray >= 0.95 * below, f"{gray} of {below}"),
+                ("the panel is as tall as its contents", 0.9 * wanted <= panel_rows <= 3 * wanted and panel >= 0.3 * panel_rows * width,
+                 f"{panel_rows} rows, expected about {wanted} for {count} result rows, {panel} panel pixels"),
+                ("the field and the list are in it", 0.6 * field_area <= field <= 1.1 * field_area,
+                 f"{field}, expected about {field_area:.0f} at scale {scale:.2f}"),
+            ]
+
+        fewest, most = rows if isinstance(rows, tuple) else (rows, rows)
+        options = [panel_checks(count) for count in range(fewest, most + 1)]
+        # the first count that fits, or when none does, the one closest to the panel on screen
+        fits = [found for wanted, found in options if all(passed for _, passed, _ in found)]
+        checks += fits[0] if fits else min(options, key=lambda option: abs(option[0] - panel_rows))[1]
     else:
         checks.insert(0, ("the desktop background covers the screen", gray >= 0.95 * total, f"{gray} of {total}"))
     lines = [f"desktop: {width}x{height}"]
@@ -291,8 +306,9 @@ def main():
     ap.add_argument("image", help="a raw image without a persist partition yet")
     ap.add_argument("passfile")
     ap.add_argument("--models", help="directory with gguf files for the models subvolume, enables the aura check")
-    ap.add_argument("--timeout", type=int, default=300, help="seconds for the whole boot")
+    ap.add_argument("--timeout", type=int, default=600, help="seconds for the whole test")
     ap.add_argument("--aura-timeout", type=int, default=120, help="seconds for aura to load the model")
+    ap.add_argument("--answer-timeout", type=int, default=240, help="seconds for aura's answer to reach the field")
     ap.add_argument("--log", default="serial.log")
     ap.add_argument("--memory", default="4096")
     ap.add_argument("--qmp", help="unix socket for the qemu monitor")
@@ -566,16 +582,17 @@ def main():
             fail(f"the local api gave no completion: {output.strip()!r}")
         ok(f"the local api completed {content.group(1)!r}")
 
-        # and the question over the bus, as the owner, no sudo. busctl's json keeps the answer on
-        # one line with its quotes escaped
-        question = "What is the capital of France?"
-        _, output = run(f"busctl --system --json=short --timeout=120 call {aura} {aura_path} {aura} Ask s '{question}'",
+        # and the question over the bus, as the owner, no sudo. Ask returns a kind and a text, and
+        # busctl's json keeps both on one line with their quotes escaped
+        _, output = run(f"busctl --system --json=short --timeout=240 call {aura} {aura_path} {aura} Ask s '{QUESTION}'",
                         "aura's answer on the bus")
-        answer = re.search(r'"data":\["((?:[^"\\]|\\.)+)"\]\}', output)
-        if not answer:
+        reply = re.search(r'"type":"ss","data":\["(\w+)","((?:[^"\\]|\\.)+)"\]\}', output)
+        if not reply:
             fail(f"Ask on the bus gave no answer: {output.strip()!r}")
-        answer = json.loads('"' + answer.group(1) + '"')
-        ok(f"aura answered {question!r} on the bus with {answer!r}")
+        kind, answer = reply.group(1), json.loads('"' + reply.group(2) + '"')
+        if kind != "answer":
+            fail(f"Ask on the bus said {kind} {answer!r} to {QUESTION!r}, expected an answer")
+        ok(f"aura answered {QUESTION!r} on the bus with {answer!r}")
 
     # 5. the desktop. greetd runs umbra on tty1 as the owner. umbra needs a moment to open the gpu
     # and paint its first frame, so the screendump is retried until it shows the background
@@ -619,19 +636,28 @@ def main():
             # 5b. the field takes a line from the terminal, over the socket in the session's
             # runtime directory, and what the line printed lands in the list under it
             stem, extension = os.path.splitext(args.desktop)
-            child.send("set -x XDG_RUNTIME_DIR /run/user/(id -u)\r")
-            expect([PROMPT], "the prompt")
-            child.send(f'corona --enter "{RESULT_LINE}"\r')
-            expect([PROMPT], "the prompt")
+            run("set -x XDG_RUNTIME_DIR /run/user/(id -u)", "the runtime directory")
+            run(f'corona --enter "{RESULT_LINE}"', "a pipeline typed into the field")
             look("the result list", f"{stem}-corona{extension}", 20, rows=RESULT_ROWS)
 
-            child.send(f'corona --enter "{ERROR_LINE}"\r')
-            expect([PROMPT], "the prompt")
+            run(f'corona --enter "{ERROR_LINE}"', "a wrong command typed into the field")
             look("the error line", f"{stem}-corona-error{extension}", 20, rows=0, error=True)
 
-            child.send("corona --escape\r")
-            expect([PROMPT], "the prompt")
+            run("corona --escape", "escape in the field")
             look("the panel back at the field", f"{stem}-corona-empty{extension}", 20, rows=0)
+
+            # 5c. a question for aura, from the terminal first, which prints the answer here, and
+            # then typed into the field. the answer is as many rows as the model makes it, so the
+            # list is only expected to have at least one
+            if args.models:
+                status, output = run(f'corona --do "{QUESTION}"', "aura's answer through corona")
+                if status != 0 or not output.strip():
+                    fail(f"corona --do could not ask aura: {output.strip()!r}")
+                ok(f"corona asked aura and printed {output.strip()!r}")
+
+                run(f'corona --enter "{QUESTION}"', "a question typed into the field")
+                look("the answer under the field", f"{stem}-corona-answer{extension}", args.answer_timeout,
+                     rows=(1, LIST_ROWS))
 
     # 6. down
     child.send("sudo systemctl poweroff\r")

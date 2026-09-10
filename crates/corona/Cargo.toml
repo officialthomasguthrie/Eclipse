@@ -14,6 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 libeclipse.workspace = true
+# questions go to aurad on the system bus
+zbus = { version = "5.18", default-features = false, features = ["async-io", "blocking-api"] }
 
 # the panel needs a wayland session and layer-shell, so it only exists on linux. the software
 # renderer is the one that works on every machine, so wgpu stays out

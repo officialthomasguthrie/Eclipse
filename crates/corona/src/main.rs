@@ -1,5 +1,5 @@
 //! corona: the shell. One field on the desktop and four interpreters behind it: the app
-//! launcher, the OS commands, nushell and Aura. The first three work, Aura says it does not.
+//! launcher, the OS commands, nushell and Aura.
 //!
 //! `corona` draws the field as a layer-shell panel on the running session. `corona --route
 //! <words>` prints what the field would do with those words and runs nothing. `corona --do
@@ -7,6 +7,7 @@
 //! confirmation the field asks for. `corona --type <words>`, `corona --enter [<words>]` and
 //! `corona --escape` type into the field of the panel that is already running.
 
+mod aura;
 mod control;
 mod launcher;
 mod nu;
@@ -68,13 +69,16 @@ fn act(input: &str, yes: bool) -> ExitCode {
         Interpretation::Launch(app) => {
             launcher::launch(&app).map(|()| format!("Starting {}", app.name))
         }
-        Interpretation::Os(action) if action.mutating && !yes => {
-            Err(format!("{}? Run again with --yes.", action.summary))
-        }
-        Interpretation::Os(action) => os::run(&action),
+        Interpretation::Os(action) => command(&action, yes),
         Interpretation::Usage(usage) => Err(usage.to_string()),
         Interpretation::Shell(line) => nu::run(&line),
-        Interpretation::Ask(_) => Err("Aura is not in this build yet.".to_string()),
+        Interpretation::Ask(question) => {
+            aura::ask(&question).and_then(|(kind, text)| match aura::read(&kind, &text) {
+                aura::Reply::Answer(answer) => Ok(answer),
+                aura::Reply::Action(action) => command(&action, yes),
+                aura::Reply::Refused(why) => Err(why),
+            })
+        }
     };
     match outcome {
         Ok(output) => {
@@ -87,6 +91,16 @@ fn act(input: &str, yes: bool) -> ExitCode {
             eprintln!("{why}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// An OS command from a terminal, typed or proposed by Aura. One that changes something waits
+/// for `--yes`.
+fn command(action: &os::Action, yes: bool) -> Result<String, String> {
+    if action.mutating && !yes {
+        Err(format!("{}? Run again with --yes.", action.summary))
+    } else {
+        os::run(action)
     }
 }
 

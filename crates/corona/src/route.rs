@@ -19,9 +19,9 @@ pub enum Interpretation {
     Os(Action),
     /// An OS command with arguments it does not understand. Holds the one-line usage.
     Usage(&'static str),
-    /// A nushell pipeline. Not run yet, the shell comes in the next step.
+    /// A nushell pipeline.
     Shell(String),
-    /// Plain words for Aura. Not answered yet.
+    /// Plain words for Aura.
     Ask(String),
 }
 

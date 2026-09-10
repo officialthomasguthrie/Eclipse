@@ -915,6 +915,7 @@ dependencies = [
  "iced",
  "iced_layershell",
  "libeclipse",
+ "zbus",
 ]
 
 [[package]]

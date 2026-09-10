@@ -1,8 +1,9 @@
 //! Aura on the system bus: `dev.eclipse.Aura` at `/dev/eclipse/Aura`.
 //!
-//! `Ask` takes a question and returns the answer as text. It runs nothing. The properties say
-//! which model runs, for which tier, and whether it answers yet; every change to them is
-//! signalled, so a client can wait for `ready` without polling.
+//! `Ask` takes a question and returns two strings, a kind and a text: `answer` and the answer in
+//! words, or `action` and the words of one of Corona's OS commands. It runs nothing. The
+//! properties say which model runs, for which tier, and whether it answers yet; every change to
+//! them is signalled, so a client can wait for `ready` without polling.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -32,13 +33,15 @@ impl Aura {
 
 #[zbus::interface(name = "dev.eclipse.Aura")]
 impl Aura {
-    /// Answers a question in plain text.
-    async fn ask(&self, question: String) -> fdo::Result<String> {
+    /// Answers a question: `answer` and plain text, or `action` and the words of a command.
+    #[zbus(out_args("kind", "text"))]
+    async fn ask(&self, question: String) -> fdo::Result<(String, String)> {
         let question = admit(&question, &self.status())?;
         let port = self.port;
-        blocking::unblock(move || chat::ask(port, &question))
+        let reply = blocking::unblock(move || chat::ask(port, &question))
             .await
-            .map_err(fdo::Error::Failed)
+            .map_err(fdo::Error::Failed)?;
+        Ok((reply.kind().to_string(), reply.into_text()))
     }
 
     /// Manifest id of the model that runs or loads. Empty when there is none.
