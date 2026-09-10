@@ -591,8 +591,9 @@ mod tests {
         }
     }
 
-    /// What a virtual machine comes to: no card we have a path for, no EDID, 4 GB of memory.
-    fn virtual_machine() -> Settings {
+    /// A machine with no card we have a path for, an output that gives no EDID, and 4 GB of
+    /// memory. A KVM switch and a cheap adapter both look like this.
+    fn no_edid() -> Settings {
         Settings {
             gpu_vendor: gpu::UNKNOWN_VENDOR.to_owned(),
             gpu_path: gpu::NONE.to_owned(),
@@ -600,6 +601,24 @@ mod tests {
             displays: vec![Display {
                 connector: "Virtual-1".to_owned(),
                 ..Display::default()
+            }],
+            ..Settings::default()
+        }
+    }
+
+    /// What the boot test's qemu machine really is: no pci vendor behind the virtio card, 4 GB
+    /// of memory, and one virtual output whose EDID says 1280x800 at 32 by 20 centimetres,
+    /// which is about 102 dpi and so scale 1.
+    fn qemu() -> Settings {
+        Settings {
+            gpu_vendor: gpu::UNKNOWN_VENDOR.to_owned(),
+            gpu_path: gpu::NONE.to_owned(),
+            ai_tier: "small".to_owned(),
+            displays: vec![Display {
+                connector: "Virtual-1".to_owned(),
+                mode: (1280, 800),
+                size_cm: (32, 20),
+                scale: displays::scale_for((1280, 800), (32, 20)),
             }],
             ..Settings::default()
         }
@@ -650,7 +669,7 @@ mod tests {
 
     #[test]
     fn only_what_differs_is_written() {
-        let text = render(&identity(), &virtual_machine(), "");
+        let text = render(&identity(), &no_edid(), "");
         assert!(
             text.contains("[detected]\ngpu_path = \"none\"\nai_tier = \"small\"\n"),
             "{text}"
@@ -669,6 +688,26 @@ mod tests {
         assert!(
             text.lines().count() < 20,
             "a profile is a few lines: {text}"
+        );
+    }
+
+    #[test]
+    fn the_profile_the_boot_test_reads() {
+        let text = render(&identity(), &qemu(), "");
+        assert_eq!(qemu().displays[0].scale, 1);
+        assert_eq!(text.lines().filter(|l| l.contains(" = ")).count(), 11);
+        assert!(!text.contains("scale ="), "{text}");
+        assert!(!text.contains("class ="), "{text}");
+        assert!(!text.contains("chassis ="), "{text}");
+        assert!(!text.contains("gpu_vendor ="), "{text}");
+        assert!(text.contains("gpu_path = \"none\""), "{text}");
+        assert!(text.contains("ai_tier = \"small\""), "{text}");
+        assert!(
+            text.contains(
+                "[[detected.display]]\nconnector = \"Virtual-1\"\nwidth = 1280\nheight = 800\n\
+                 width_cm = 32\nheight_cm = 20\n"
+            ),
+            "{text}"
         );
     }
 
@@ -693,14 +732,14 @@ mod tests {
     fn set_wins_over_detected_and_over_the_defaults() {
         let text = render(
             &identity(),
-            &virtual_machine(),
+            &no_edid(),
             "[set]\nclass = \"owned\" # mine\ngpu_path = \"mesa\"\n",
         );
         let stored = Stored::parse(&text).unwrap();
         assert_eq!(stored.identity, identity());
         assert_eq!(stored.set.class.as_deref(), Some("owned"));
         assert_eq!(stored.set.gpu_path.as_deref(), Some("mesa"));
-        let effective = stored.set.over(virtual_machine());
+        let effective = stored.set.over(no_edid());
         assert_eq!(effective.class, "owned");
         assert_eq!(effective.gpu_path, "mesa");
         assert_eq!(effective.ai_tier, "small");
@@ -735,7 +774,7 @@ mod tests {
     fn first_boot_then_second_boot() {
         let dir = temp_dir("record");
         let host = sample_host();
-        let detected = virtual_machine();
+        let detected = no_edid();
 
         let (path, seen, profile) = record(&dir, &host, &detected, "2026-09-09T18:30:00Z").unwrap();
         assert_eq!(seen, Seen::New);
@@ -776,7 +815,7 @@ mod tests {
         let dir = temp_dir("rewrite");
         let host = sample_host();
 
-        record(&dir, &host, &virtual_machine(), "2026-09-09T18:30:00Z").unwrap();
+        record(&dir, &host, &no_edid(), "2026-09-09T18:30:00Z").unwrap();
         let path = path(&dir, &host.fingerprint());
         assert!(
             fs::read_to_string(&path)

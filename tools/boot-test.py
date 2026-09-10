@@ -407,10 +407,10 @@ def main():
     fingerprint = child.match.group(1)
     expect([PROMPT], "the prompt")
 
-    # the profile is a delta over the defaults, so a virtual machine writes seven lines with a
+    # the profile is a delta over the defaults, so a virtual machine writes eleven lines with a
     # value on them: the four that say which machine this is, the two settings a qemu box does
-    # not share with the defaults, and the one output. the class is the default, so it is not in
-    # the file at all.
+    # not share with the defaults, and five for its one output. the class, the chassis, the
+    # vendor and the scale are all the defaults, so they are not in the file at all.
     profile = f"{hosts}/{fingerprint}.toml"
     child.send(f"cat {profile}\r")
     expect([rf'fingerprint = "{fingerprint}"'], "the fingerprint in the profile")
@@ -422,6 +422,10 @@ def main():
     file_ai_tier = child.match.group(1)
     expect([r'connector = "([\w-]+)"'], "the output in the profile")
     file_connector = child.match.group(1)
+    expect([r"width = (\d+)"], "the output width in the profile")
+    file_width = child.match.group(1)
+    expect([r"height = (\d+)"], "the output height in the profile")
+    file_height = child.match.group(1)
     expect([PROMPT], "the prompt")
 
     def count(what, command):
@@ -432,14 +436,18 @@ def main():
         return value
 
     keys = count("keys", f"grep -c ' = ' {profile}")
-    if keys != 7:
-        fail(f"the profile has {keys} lines with a value on them, expected 7, so it is not a delta")
+    if keys != 11:
+        fail(f"the profile has {keys} lines with a value on them, expected 11, not a delta")
     if count("class", f"grep -c '^class = ' {profile}") != 0:
         fail("the profile writes the class, which is the default and belongs to no machine")
     if file_gpu_path != "none":
         fail(f"the profile says gpu path {file_gpu_path}, expected none for a virtual machine")
     if file_ai_tier != "small":
         fail(f"the profile says ai tier {file_ai_tier}, expected small for a 4 GB machine")
+    if (file_width, file_height) != ("1280", "800"):
+        fail(f"the profile says the output is {file_width}x{file_height}, expected 1280x800")
+    if count("scale", f"grep -c '^scale = ' {profile}") != 0:
+        fail("the profile writes a scale, but a 32 by 20 cm 1280x800 panel is about 102 dpi")
 
     # the bus. the interface is read only, so the owner reads it without sudo
     bus, obj = "dev.eclipse.Syzygy", "/dev/eclipse/Syzygy"
@@ -465,7 +473,8 @@ def main():
     if ai_tier != file_ai_tier:
         fail(f"the bus says ai tier {ai_tier}, the profile says {file_ai_tier}")
 
-    # one virtual output, no edid behind it, so the mode is unknown and the scale falls back to 1
+    # one virtual output. qemu gives it an edid, so the mode and the size are real; at 32 by 20
+    # centimetres 1280x800 is about 102 dpi, which is under the line, so the scale is 1
     displays = prop("Displays", r"a\(suuu\) (\d+)([^\r\n]*)\r*\n")
     if displays.group(1) != "1":
         fail(f"the bus lists {displays.group(1)} outputs, expected 1:{displays.group(2)}")
@@ -474,8 +483,9 @@ def main():
         fail(f"the output on the bus does not read as one:{displays.group(2)}")
     if output.group(1) != file_connector:
         fail(f"the bus calls the output {output.group(1)}, the profile calls it {file_connector}")
-    if output.group(2, 3, 4) != ("0", "0", "1"):
-        fail(f"the virtual output is {output.group(2, 3, 4)}, expected no mode and scale 1")
+    if output.group(2, 3, 4) != (file_width, file_height, "1"):
+        fail(f"the output on the bus is {output.group(2, 3, 4)}, the profile says "
+             f"{file_width}x{file_height} at scale 1")
     ok(
         f"host profile {fingerprint[:12]}, {machine}, class {klass}, gpu {gpu_path}, "
         f"ai tier {ai_tier}, output {output.group(1)} scale {output.group(4)}, on the bus"
