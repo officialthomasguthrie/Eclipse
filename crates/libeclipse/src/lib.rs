@@ -80,8 +80,11 @@ impl Component {
     }
 }
 
-/// Where things live on a running Eclipse system. All of these are on the persist partition.
+/// Where things live on a running Eclipse system. All of these are on the persist partition,
+/// except what the image itself installs under /etc.
 pub mod paths {
+    /// The model manifest, installed by the image.
+    pub const MODEL_MANIFEST: &str = "/etc/eclipse/models.toml";
     /// Top level of the persist volume.
     pub const PERSIST: &str = "/persist";
     /// GGUF weights and voices (`@models`).

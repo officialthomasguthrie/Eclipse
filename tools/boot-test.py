@@ -11,8 +11,9 @@ boots the image as an nvme drive. Everything goes through the serial console: th
 autologin shell, a few commands, the host profile syzygy wrote. The serial output is printed as it
 arrives and kept in the log file.
 
-With --models the files in that directory go into the @models subvolume before boot, and the test
-waits for aura-inference to load the model and asks the local api for a short completion.
+With --models the files in that directory go into the @models subvolume before boot. The test waits
+on the system bus until aurad has loaded the model it picked for syzygy's tier, checks that it is the
+one in the directory, asks the local api for a short completion and asks aura a question over the bus.
 
 With --splash the test also takes a screendump through the qemu monitor while the luks prompt is up
 and checks that the Totality splash is on screen: the light disc and the black disc from
@@ -40,6 +41,7 @@ import struct
 import sys
 import tempfile
 import time
+import tomllib
 import zlib
 
 import pexpect
@@ -492,36 +494,77 @@ def main():
         f"ai tier {ai_tier}, output {output.group(1)} scale {output.group(4)}, on the bus"
     )
 
-    # 4. aura's backend found the model and answers on localhost. the unit is active as soon as
-    # llama-server runs, loading takes longer, so poll its health endpoint
+    # 4. aura. aurad reads the tier from syzygy, picks a model that is on the drive, runs
+    # llama-server as its child and answers on the system bus. the name is there before the model
+    # has loaded, so poll the State property
     if args.models:
-        child.send("systemctl is-active aura-inference\r")
-        expect([r"(?<![\w-])(active|inactive|failed|activating)\s"], "the aura-inference unit state")
+        child.send("systemctl is-active aura\r")
+        expect([r"(?<![\w-])(active|inactive|failed|activating)\s"], "the aura unit state")
         state = child.match.group(1)
         expect([PROMPT], "the prompt")
         if state not in ("active", "activating"):
-            fail(f"aura-inference.service is {state}, expected active")
+            fail(f"aura.service is {state}, expected active")
 
-        api = "localhost:11434"
+        aura, aura_path = "dev.eclipse.Aura", "/dev/eclipse/Aura"
+
+        def aura_prop(name, pattern):
+            """A property of aura's, or None when the bus gave no answer."""
+            child.send(f"busctl --system get-property {aura} {aura_path} {aura} {name}\r")
+            if expect([pattern, PROMPT], f"aura's {name} property") == 1:
+                return None
+            value = child.match.group(1)
+            expect([PROMPT], "the prompt")
+            return value
+
         aura_deadline = time.monotonic() + args.aura_timeout
         while True:
-            child.send(f"curl -s -o /dev/null -w 'health=%{{http_code}}\\n' {api}/health\r")
-            expect([r"health=(\d{3})\s"], "the aura health code")
-            code = child.match.group(1)
-            expect([PROMPT], "the prompt")
-            if code == "200":
+            aura_state = aura_prop("State", r's "(\w+)"\s')
+            if aura_state == "ready":
                 break
-            if time.monotonic() > aura_deadline:
-                fail(f"aura did not load the model within {args.aura_timeout}s, last health code {code}")
+            if aura_state in ("none", "failed") or time.monotonic() > aura_deadline:
+                why = aura_prop("Error", r's "([^\r\n]*)"\s')
+                fail(f"aura is {aura_state or 'not on the bus'} after {since()}: {why}")
             time.sleep(5)
-        ok("aura loaded the model")
+
+        # the only model on the drive is the one in --models, and the manifest says which id it is
+        manifest_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models", "manifest.toml")
+        with open(manifest_path, "rb") as f:
+            chat = tomllib.load(f)["chat"]
+        on_drive = set(os.listdir(args.models))
+        wanted_model = [m["id"] for m in chat if m["file"] in on_drive]
+        aura_tier = aura_prop("Tier", r's "(\w*)"\s')
+        aura_model = aura_prop("Model", r's "([\w.-]*)"\s')
+        ok(f"aura loaded {aura_model} for tier {aura_tier}")
+        if aura_tier != ai_tier:
+            fail(f"aura says the tier is {aura_tier}, syzygy says {ai_tier}")
+        if [aura_model] != wanted_model:
+            fail(f"aura runs {aura_model}, the models on the drive are {wanted_model}")
+
+        # the local api that other programs use is the same server
+        api = "localhost:11434"
+        child.send(f"curl -s -o /dev/null -w 'health=%{{http_code}}\\n' {api}/health\r")
+        expect([r"health=(\d{3})\s"], "the aura health code")
+        code = child.match.group(1)
+        expect([PROMPT], "the prompt")
+        if code != "200":
+            fail(f"the local api says {code} on /health, but aura says the model is ready")
 
         body = '{"prompt":"The capital of France is","n_predict":4}'
         child.send(f"curl -s {api}/completion -d '{body}'\r")
         expect([r'"content":"([^"]+)"'], "a completion with text in it")
         content = child.match.group(1)
         expect([PROMPT], "the prompt")
-        ok(f"aura answered {content!r}")
+        ok(f"the local api completed {content!r}")
+
+        # and the question over the bus, as the owner, no sudo. busctl's json keeps the answer on
+        # one line with its quotes escaped
+        question = "What is the capital of France?"
+        child.send(f"busctl --system --json=short --timeout=120 call {aura} {aura_path} {aura} Ask s '{question}'\r")
+        if expect([r'"data":\["((?:[^"\\]|\\.)+)"\]\}', PROMPT], "aura's answer on the bus") == 1:
+            fail("Ask on the bus gave no answer, the reason is in the serial log above")
+        answer = json.loads('"' + child.match.group(1) + '"')
+        expect([PROMPT], "the prompt")
+        ok(f"aura answered {question!r} on the bus with {answer!r}")
 
     # 5. the desktop. greetd runs umbra on tty1 as the owner. umbra needs a moment to open the gpu
     # and paint its first frame, so the screendump is retried until it shows the background

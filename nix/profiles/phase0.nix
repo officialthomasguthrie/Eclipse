@@ -42,9 +42,9 @@
 
   eclipse.totality.enable = true;
   eclipse.syzygy.enable = true;
+  # aurad picks the model for the tier. the boot test copies only the test model into @models,
+  # so that is what runs there
   eclipse.aura.enable = true;
-  # the smallest chat model in the manifest. the boot test copies it into @models before boot
-  eclipse.aura.model = "Qwen3-0.6B-Q8_0.gguf";
   eclipse.umbra.enable = true;
   eclipse.corona.enable = true;
   eclipse.penumbra.enable = false;

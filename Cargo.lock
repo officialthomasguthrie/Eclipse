@@ -420,7 +420,12 @@ dependencies = [
 name = "aura"
 version = "0.1.0"
 dependencies = [
+ "blocking",
  "libeclipse",
+ "serde",
+ "serde_json",
+ "toml",
+ "zbus",
 ]
 
 [[package]]

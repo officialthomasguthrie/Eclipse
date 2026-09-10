@@ -1,17 +1,46 @@
-# aura: local ai. aurad supervises llama-server (vulkan + cpu), whisper and piper, and exposes
-# dev.eclipse.Aura on d-bus plus an openai-style api on localhost. only the backend is wired for now.
+# aura: local ai. aurad picks a chat model from the manifest for the tier syzygy reports, runs
+# llama-server (vulkan + cpu) on the loopback address as its child and answers on the system bus
+# as dev.eclipse.Aura. whisper and piper come later.
 {
   config,
   lib,
   pkgs,
+  self,
   ...
 }:
 let
   cfg = config.eclipse.aura;
+  busName = "dev.eclipse.Aura";
+  # anyone on the machine may ask and read the properties. only aura's own user owns the name
+  policy = pkgs.writeTextFile {
+    name = "aura-dbus-policy";
+    destination = "/share/dbus-1/system.d/${busName}.conf";
+    text = ''
+      <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+       "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+      <busconfig>
+        <policy user="aura">
+          <allow own="${busName}"/>
+        </policy>
+        <policy context="default">
+          <allow send_destination="${busName}" send_interface="${busName}"/>
+          <allow send_destination="${busName}" send_interface="org.freedesktop.DBus.Properties"/>
+          <allow send_destination="${busName}" send_interface="org.freedesktop.DBus.Introspectable"/>
+          <allow send_destination="${busName}" send_interface="org.freedesktop.DBus.Peer"/>
+        </policy>
+      </busconfig>
+    '';
+  };
 in
 {
   options.eclipse.aura = {
     enable = lib.mkEnableOption "Aura, the local AI service";
+
+    daemon = lib.mkOption {
+      type = lib.types.package;
+      default = self.packages.${pkgs.stdenv.hostPlatform.system}.workspace;
+      description = "The build that provides aurad.";
+    };
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -26,9 +55,9 @@ in
     };
 
     model = lib.mkOption {
-      type = lib.types.str;
-      default = "Qwen3-4B-Q4_K_M.gguf";
-      description = "Default chat model file. Syzygy overrides this per host tier.";
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "A chat model id or file from the manifest to run instead of the one the tier picks.";
     };
 
     port = lib.mkOption {
@@ -45,32 +74,54 @@ in
 
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ cfg.package ];
+    # the one list of models. aurad reads it here
+    environment.etc."eclipse/models.toml".source = ../../models/manifest.toml;
+    services.dbus.packages = [ policy ];
 
-    systemd.services.aura-inference = {
-      description = "Aura inference backend (llama-server)";
+    users.users.aura = {
+      isSystemUser = true;
+      group = "aura";
+      description = "Aura";
+    };
+    users.groups.aura = { };
+
+    systemd.services.aura = {
+      description = "Aura, the local AI service";
       wantedBy = [ "multi-user.target" ];
-      # the condition is checked when the unit starts, so it has to run after the mount
-      unitConfig = {
-        RequiresMountsFor = [ cfg.modelsDir ];
-        ConditionPathExists = "${cfg.modelsDir}/${cfg.model}";
-      };
+      requires = [ "dbus.service" ];
+      # syzygy counts as started once its name is on the bus, and by then it knows the tier
+      after = [
+        "dbus.service"
+        "syzygy.service"
+      ];
+      unitConfig.RequiresMountsFor = [ cfg.modelsDir ];
       serviceConfig = {
-        ExecStart = lib.concatStringsSep " " [
-          "${cfg.package}/bin/llama-server"
-          "--host 127.0.0.1"
-          "--port ${toString cfg.port}"
-          "--model ${cfg.modelsDir}/${cfg.model}"
-          "--ctx-size ${toString cfg.contextSize}"
-        ];
+        # aurad takes the name once it has the tier. the model loads after that, the State
+        # property says when it is ready
+        Type = "dbus";
+        BusName = busName;
+        ExecStart = lib.concatStringsSep " " (
+          [
+            "${cfg.daemon}/bin/aurad"
+            "--manifest /etc/eclipse/models.toml"
+            "--models-dir ${cfg.modelsDir}"
+            "--llama-server ${cfg.package}/bin/llama-server"
+            "--port ${toString cfg.port}"
+            "--ctx-size ${toString cfg.contextSize}"
+          ]
+          ++ lib.optional (cfg.model != null) "--model ${cfg.model}"
+        );
         Restart = "on-failure";
-        DynamicUser = true;
+        User = "aura";
+        Group = "aura";
+        # llama-server is aurad's child, everything below holds for it too
         SupplementaryGroups = [
           "render"
           "video"
         ];
         DeviceAllow = [ "char-drm rw" ];
         ReadOnlyPaths = [ cfg.modelsDir ];
-        # aura never talks to the network, localhost only
+        # aura never talks to the network, localhost only. the bus is a unix socket
         IPAddressDeny = "any";
         IPAddressAllow = [ "localhost" ];
         PrivateTmp = true;
