@@ -180,6 +180,17 @@ QUESTION = "What is the capital of France?"
 CONSOLE = (40, 40, 40)
 CONSOLE_HEIGHT = 400
 CONSOLE_APP_ID = "dev.eclipse.Console"
+# the lock screen, from crates/umbra-lock/src/draw.rs: its gray, the inside of the field, the ring
+# around it, the sentence for a refused password, and the field's size in logical pixels
+LOCK = (30, 30, 30)
+LOCK_FIELD = (46, 46, 46)
+ACCENT = (120, 174, 237)
+REFUSED = (224, 109, 109)
+LOCK_FIELD_SIZE = (280, 32)
+LOCK_RING = 2
+# the owner's password from nix/profiles/base.nix, and one that is not it
+PASSWORD = "eclipse"
+WRONG_PASSWORD = "wrongpassword"
 
 
 def near(pixel, color, tolerance):
@@ -298,18 +309,25 @@ def check_desktop(width, height, rgb, corona=False, rows=0, error=False):
 
 def check_console(width, height, rgb):
     """Find the console in a screendump: corona's panel along the top, under it a run of rows that
-    are mostly the console's background, and the desktop under that. Returns (ok, lines to print)."""
+    are mostly the console's background, and the desktop under that. The terminal shows one line
+    of text, the prompt, and nothing a shell printed before it. Returns (ok, lines to print)."""
     gray = black = 0
     panel_rows = 0
     console_top, console_rows, console_width = -1, 0, 0
+    text_rows = []
     for y in range(height):
         row = y * width * 3
-        row_panel = row_console = 0
+        row_panel = row_console = row_text = 0
         for x in range(width):
             px = rgb[row + x * 3 : row + x * 3 + 3]
             if near(px, CONSOLE, 1):
                 row_console += 1
-            elif near(px, DESKTOP, 3):
+                continue
+            # what is not close to the console's gray is text. the desktop and the panel grays are
+            # close to it. lines start at the left edge, the pointer sits in the middle of the screen
+            if x < width / 4 and not near(px, CONSOLE, 12):
+                row_text += 1
+            if near(px, DESKTOP, 3):
                 gray += 1
             elif near(px, MOON, 8):
                 black += 1
@@ -324,10 +342,14 @@ def check_console(width, height, rgb):
                 console_top = y
             console_rows += 1
             console_width = max(console_width, row_console)
+            if row_text:
+                text_rows.append(y)
     total = width * height
     scale = panel_rows / PANEL_HEIGHT if panel_rows else 1
     wanted = CONSOLE_HEIGHT * scale
     below = total - (panel_rows + console_rows) * width
+    # a line of DejaVu Sans Mono 11 is 17 rows, the prompt starts a few rows under the window's top
+    one_line = bool(text_rows) and text_rows[0] - console_top <= 12 * scale and text_rows[-1] - text_rows[0] < 24 * scale
     checks = [
         ("no console black", black <= 0.02 * total, f"{black} of {total}"),
         ("the panel is along the top", 0.9 * PANEL_HEIGHT <= panel_rows <= 3 * PANEL_HEIGHT, f"{panel_rows} rows"),
@@ -337,11 +359,76 @@ def check_console(width, height, rgb):
          f"{console_rows} rows, expected about {wanted:.0f}"),
         ("the console is as wide as the screen", console_width >= 0.9 * width, f"{console_width} of {width} in its widest row"),
         ("the desktop background covers the rest", gray >= 0.9 * below, f"{gray} of {below}"),
+        ("the terminal shows only its prompt", one_line,
+         f"text in rows {text_rows[0]} to {text_rows[-1]}, the console starts at {console_top}" if text_rows else "no text"),
     ]
     lines = [f"console: {width}x{height}"]
     ok = True
     for name, passed, detail in checks:
         lines.append(f"console: {'ok  ' if passed else 'FAIL'} {name}: {detail}")
+        ok = ok and passed
+    return ok, lines
+
+
+def check_lock(width, height, rgb, refused=False):
+    """Find the lock screen in a screendump: its gray over the whole screen, the field in the middle
+    with the blue ring around it, and none of the desktop, corona's panel or the console. With
+    refused, the red sentence is under the field, without it there is none. Returns (ok, lines to
+    print)."""
+    ground = desktop = console = ring = red = field = 0
+    left, top, right, bottom = width, height, -1, -1
+    for y in range(height):
+        row = y * width * 3
+        row_field, row_left, row_right = 0, width, -1
+        for x in range(width):
+            px = rgb[row + x * 3 : row + x * 3 + 3]
+            if near(px, LOCK, 2):
+                ground += 1
+            elif near(px, LOCK_FIELD, 2):
+                row_field += 1
+                row_left, row_right = min(row_left, x), max(row_right, x)
+            elif near(px, DESKTOP, 1):
+                desktop += 1
+            elif near(px, CONSOLE, 1):
+                console += 1
+            elif near(px, ACCENT, 24):
+                ring += 1
+            elif near(px, REFUSED, 24):
+                red += 1
+        # a row of the field has a long run of its gray. the edges of the text above and under it
+        # pass through that gray in a few pixels
+        if row_field >= 100:
+            field += row_field
+            left, right = min(left, row_left), max(right, row_right)
+            top, bottom = min(top, y), max(bottom, y)
+    total = width * height
+    # the inside of the field is the field less its ring. corona's field would stretch the box to
+    # the top of the screen
+    inner = (LOCK_FIELD_SIZE[0] - 2 * LOCK_RING, LOCK_FIELD_SIZE[1] - 2 * LOCK_RING)
+    box = (right - left + 1, bottom - top + 1) if right >= 0 else (0, 0)
+    scale = max(1, round(box[0] / inner[0]))
+    ring_wanted = 2 * (LOCK_FIELD_SIZE[0] + LOCK_FIELD_SIZE[1]) * LOCK_RING * scale * scale
+    checks = [
+        ("the lock screen's gray covers the screen", ground >= 0.95 * total, f"{ground} of {total}"),
+        ("nothing of the desktop", desktop <= 0.002 * total, f"{desktop} desktop gray pixels"),
+        ("nothing of the console", console <= 0.002 * total, f"{console} console gray pixels"),
+        ("the field is in the middle", right >= 0 and abs((left + right) / 2 - width / 2) <= 4 * scale
+         and abs((top + bottom) / 2 - height / 2) <= 4 * scale,
+         f"from {left},{top} to {right},{bottom} on {width}x{height}"),
+        ("the field is as big as the lock screen draws it", abs(box[0] - inner[0] * scale) <= 4 * scale
+         and abs(box[1] - inner[1] * scale) <= 4 * scale and field >= 0.8 * box[0] * box[1],
+         f"{box[0]}x{box[1]}, {field} field pixels, expected about {inner[0] * scale}x{inner[1] * scale}"),
+        ("the blue ring is around it", 0.6 * ring_wanted <= ring <= 1.5 * ring_wanted,
+         f"{ring}, expected about {ring_wanted}"),
+    ]
+    if refused:
+        checks.append(("the sentence under the field says the password was refused", red >= 100, f"{red} red pixels"))
+    else:
+        checks.append(("no sentence about a refused password", red <= 20, f"{red} red pixels"))
+    lines = [f"lock: {width}x{height}"]
+    ok = True
+    for name, passed, detail in checks:
+        lines.append(f"lock: {'ok  ' if passed else 'FAIL'} {name}: {detail}")
         ok = ok and passed
     return ok, lines
 
@@ -761,22 +848,25 @@ def main():
         if state != "active":
             fail(f"greetd.service is {state}, expected active")
 
-        def look(what, png, seconds, console=False, journals=(), **shape):
-            """Screendump until the panel has the shape we asked for, or the console is open, or
-            give up and save it. On a failure the journal of each tag in journals is printed."""
+        def look(what, png, seconds, console=False, lock=None, journals=(), **shape):
+            """Screendump until the panel has the shape we asked for, or the console is open, or the
+            lock screen is up (lock says whether it has refused a password), or give up and save
+            it. On a failure the journal of each tag in journals is printed."""
             deadline = time.monotonic() + seconds
             while True:
                 try:
                     width, height, rgb = screendump(args.qmp, work, "desktop")
                 except (OSError, RuntimeError) as e:
                     fail(f"screendump: {e}")
-                if console:
+                if lock is not None:
+                    good, lines = check_lock(width, height, rgb, refused=lock)
+                elif console:
                     good, lines = check_console(width, height, rgb)
                 else:
                     good, lines = check_desktop(width, height, rgb, corona=args.corona, **shape)
                 if good or time.monotonic() > deadline:
                     break
-                time.sleep(2 if shape or console else 5)
+                time.sleep(2 if shape or console or lock is not None else 5)
             write_png(png, width, height, rgb)
             print("\nboot-test: " + "\nboot-test: ".join(lines), flush=True)
             if not good:
@@ -865,6 +955,82 @@ def main():
             run(toggle, "the hide action again")
             look("the panel back without the console", f"{stem}-console-closed{extension}", 20, rows=0)
             ok(f"the same console came back with shell {shell} and went away again")
+
+            # 5e. the lock screen. logind signals the session greetd opened when it is asked to lock
+            # it, the listener umbra started runs umbra-lock, and the password goes in on the vm's
+            # keyboard through the monitor. the console is open while the session is locked and
+            # has to come back as it was
+            _, output = run("for s in (loginctl list-sessions --no-legend | string trim | string split -f1 ' '); "
+                            "if test (loginctl show-session $s -p Service --value) = greetd; "
+                            "echo session=$s class=(loginctl show-session $s -p Class --value); end; end",
+                            "the session greetd opened")
+            found = re.search(r"session=(\S+) class=(\S+)", output)
+            if not found:
+                fail(f"logind lists no session from greetd: {without_console(output).strip()[-400:]!r}")
+            session, session_class = found.group(1), found.group(2)
+            if session_class != "user":
+                fail(f"greetd's session {session} is a {session_class} session, logind locks only user sessions")
+            _, output = run("grep '^N:' /proc/bus/input/devices", "the input devices")
+            print(f"\nboot-test: the vm's input devices:\n{without_console(output)}", flush=True)
+
+            def locked_hint(wanted, what):
+                """Wait up to ten seconds for logind's LockedHint on the session to say wanted."""
+                hint = None
+                for _ in range(10):
+                    _, output = run(f"loginctl show-session {session} -p LockedHint --value", "the locked hint")
+                    found = re.search(r"^(yes|no)$", without_console(output), re.M)
+                    hint = found.group(1) if found else without_console(output).strip()
+                    if hint == wanted:
+                        return
+                    time.sleep(1)
+                fail(f"logind says LockedHint={hint} for session {session} {what}, expected {wanted}")
+
+            def press(*keys, what):
+                """Press keys on the vm's keyboard. Each item is a list of qemu key codes held together."""
+                commands = [{"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": code} for code in held]}}
+                            for held in keys]
+                try:
+                    qmp(args.qmp, *commands)
+                except (OSError, RuntimeError) as e:
+                    fail(f"typing {what}: {e}")
+
+            def type_line(text, what):
+                press(*([c] for c in text), ["ret"], what=what)
+
+            run(toggle, "the show action before locking")
+            look("the console before locking", f"{stem}-lock-console{extension}", 20, console=True, journals=("console", "umbra"))
+            status, output = run(f"loginctl lock-session {session}", "loginctl lock-session")
+            if status != 0:
+                fail(f"loginctl lock-session {session} exited with {status}: {without_console(output).strip()!r}")
+            look("the lock screen", f"{stem}-lock{extension}", 30, lock=False, journals=("lock", "umbra"))
+            locked_hint("yes", "with the lock screen up")
+            ok(f"loginctl locked session {session}, the lock screen covers the console and the panel")
+
+            type_line(WRONG_PASSWORD, "a wrong password")
+            look("the lock screen refusing a wrong password", f"{stem}-lock-refused{extension}", 30, lock=True,
+                 journals=("lock", "umbra"))
+            locked_hint("yes", "after a wrong password")
+            ok("a wrong password was refused and the session stayed locked")
+
+            type_line(PASSWORD, "the owner's password")
+            look("the console after unlocking", f"{stem}-lock-unlocked{extension}", 30, console=True, journals=("lock", "umbra"))
+            locked_hint("no", "after the owner's password")
+            if console_window() != window:
+                fail(f"the console came back as {console_window()} after unlocking, expected window {window_id} of ghostty {pid}")
+            if shell not in children(pid, "the program in the console after unlocking"):
+                fail(f"the console's shell {shell} is gone after unlocking")
+            run(toggle, "the hide action after unlocking")
+            look("the desktop and the panel after unlocking", f"{stem}-lock-desktop{extension}", 20, rows=0)
+            ok(f"the owner's password unlocked it, the console came back with shell {shell}")
+
+            # Mod+L on the same keyboard runs umbra-lock from the bind
+            press(["meta_l", "l"], what="Mod+L")
+            look("the lock screen from Mod+L", f"{stem}-lock-key{extension}", 30, lock=False, journals=("lock", "umbra"))
+            type_line(PASSWORD, "the owner's password")
+            look("the desktop and the panel after unlocking again", f"{stem}-lock-desktop-again{extension}", 30, rows=0,
+                 journals=("lock", "umbra"))
+            locked_hint("no", "after unlocking the lock from Mod+L")
+            ok("Mod+L locked the session and the owner's password unlocked it")
 
             # 5d. a question for aura, from the terminal first, which prints the answer here, and
             # then typed into the field. the answer is as many rows as the model makes it, so the

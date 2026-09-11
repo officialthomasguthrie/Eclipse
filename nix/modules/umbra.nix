@@ -16,6 +16,16 @@ let
     appId = "dev.eclipse.Console";
     height = 400;
   };
+  # the session greetd runs. greetd drops the session's own output, systemd-cat puts umbra's log
+  # in the journal
+  session = "${config.systemd.package}/bin/systemd-cat -t umbra ${umbra}/bin/umbra --session";
+  # the lock screen, from the workspace package. its log goes to the journal under lock
+  lock = [
+    "${config.systemd.package}/bin/systemd-cat"
+    "-t"
+    "lock"
+    "${self.packages.${pkgs.stdenv.hostPlatform.system}.workspace}/bin/umbra-lock"
+  ];
   # ghostty's settings, written into the owner's home once, when there is no file yet. tmpfiles
   # turns the \n into new lines
   ghosttySettings = lib.concatStringsSep "\\n" [
@@ -78,6 +88,11 @@ let
         Mod+Shift+Slash hotkey-overlay-title="Show these shortcuts" { show-hotkey-overlay; }
         Mod+T hotkey-overlay-title="Open a terminal" { spawn "ghostty"; }
         Mod+Grave hotkey-overlay-title="Show or hide the console" { toggle-console app-id="${console.appId}" "${config.systemd.package}/bin/systemd-cat" "-t" "console" "ghostty" "--class=${console.appId}"; }
+        // while the session is locked the key starts a lock screen again, in case the one that
+        // locked it has gone. umbra turns a second one away while the first is still there
+        Mod+L allow-when-locked=true hotkey-overlay-title="Lock the screen" { spawn ${
+          lib.concatMapStringsSep " " (word: ''"${word}"'') lock
+        }; }
         Mod+Q hotkey-overlay-title="Close the window" { close-window; }
         Mod+O repeat=false hotkey-overlay-title="Show all workspaces" { toggle-overview; }
 
@@ -153,15 +168,23 @@ in
   config = lib.mkIf cfg.enable {
     services.greetd = {
       enable = true;
-      # no greeter: the session command is the compositor, run as the owner. when it ends greetd
-      # starts it again
-      restart = true;
-      # greetd drops the session's own output, systemd-cat puts umbra's log in the journal
-      settings.default_session = {
-        command = "${config.systemd.package}/bin/systemd-cat -t umbra ${umbra}/bin/umbra --session";
+      # the owner's session starts once a boot with no password, the drive's passphrase was
+      # asked for already. greetd opens it as a user session, which logind can lock. a default
+      # session is a greeter to logind, and a greeter cannot lock
+      settings.initial_session = {
+        command = session;
         user = cfg.user;
       };
+      # when the session ends, the owner's password on tty1 starts it again
+      settings.default_session.command = "${config.services.greetd.package}/bin/agreety --cmd '${session}'";
+      # greetd keeps a file in /run that says the first session ran, so a restart asks for the
+      # password instead of starting it again
+      restart = true;
     };
+    # the lock screen. Mod+L runs it, and the listener runs it when logind signals the session,
+    # which is what loginctl lock-session does. pam checks the owner's password
+    eclipse.umbra.startup = [ (lock ++ [ "--listen" ]) ];
+    security.pam.services.umbra-lock = { };
     # session files and XDG_DATA_DIRS for a greeter, nothing here reads them
     services.displayManager.enable = false;
 

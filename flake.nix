@@ -86,11 +86,12 @@
             pname = "eclipse";
             version = "0.1.0";
             cargoExtraArgs = firstParty;
-            # corona's panel links the wayland client library and xkbcommon
+            # corona's panel links the wayland client library and xkbcommon, the lock screen pam
             nativeBuildInputs = lib.optionals pkgs.stdenv.isLinux [ pkgs.pkg-config ];
             buildInputs = lib.optionals pkgs.stdenv.isLinux [
               pkgs.wayland
               pkgs.libxkbcommon
+              pkgs.pam
             ];
           };
           cargoArtifacts = craneLib.buildDepsOnly common;

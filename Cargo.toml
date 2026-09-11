@@ -11,6 +11,7 @@ members = [
   "crates/eclipse-flash",
   "crates/totality-splash",
   "crates/umbra",
+  "crates/umbra-lock",
   "crates/umbra/niri-config",
   "crates/umbra/niri-ipc",
 ]

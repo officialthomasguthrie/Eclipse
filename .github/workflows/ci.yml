@@ -20,8 +20,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      # corona's panel links the wayland client library and xkbcommon
-      - run: sudo apt-get install -y --no-install-recommends libwayland-dev libxkbcommon-dev >/dev/null
+      # corona's panel links the wayland client library and xkbcommon, the lock screen pam
+      - run: sudo apt-get install -y --no-install-recommends libwayland-dev libxkbcommon-dev libpam0g-dev >/dev/null
       - run: cargo fmt --all --check
       # the umbra crates need the compositor's system libraries, the nix job builds those
       - run: cargo clippy --workspace --exclude umbra --exclude niri-config --exclude niri-ipc --all-targets -- -D warnings
