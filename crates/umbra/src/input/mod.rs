@@ -743,6 +743,9 @@ impl State {
                 let (token, _) = self.niri.activation_state.create_external_token(None);
                 spawn(command, Some(token.clone()));
             }
+            Action::ToggleConsole(app_id, command) => {
+                self.toggle_console(&app_id, command);
+            }
             Action::SpawnSh(command) => {
                 let (token, _) = self.niri.activation_state.create_external_token(None);
                 spawn_sh(command, Some(token.clone()));

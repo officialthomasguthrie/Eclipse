@@ -240,6 +240,9 @@ pub struct Niri {
     // Windows which don't have a buffer attached yet.
     pub unmapped_windows: HashMap<WlSurface, Unmapped>,
 
+    /// The console's tile while the console is hidden. Its window stays mapped, out of the layout.
+    pub hidden_console: Option<crate::layout::RemovedTile<Mapped>>,
+
     /// Layer surfaces which don't have a buffer attached yet.
     pub unmapped_layer_surfaces: HashSet<WlSurface>,
 
@@ -2534,6 +2537,7 @@ impl Niri {
             sorted_outputs: Vec::default(),
             output_state: HashMap::new(),
             unmapped_windows: HashMap::new(),
+            hidden_console: None,
             unmapped_layer_surfaces: HashSet::new(),
             mapped_layer_surfaces: HashMap::new(),
             root_surface: HashMap::new(),

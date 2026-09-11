@@ -506,6 +506,12 @@ pub struct RemovedTile<W: LayoutElement> {
     is_floating: bool,
 }
 
+impl<W: LayoutElement> RemovedTile<W> {
+    pub fn window(&self) -> &W {
+        self.tile.window()
+    }
+}
+
 /// Whether to activate a newly added window.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ActivateWindow {
@@ -1225,6 +1231,54 @@ impl<W: LayoutElement> Layout<W> {
         }
 
         None
+    }
+
+    /// Puts a tile that remove_window() returned back on the active workspace, floating or not as
+    /// it was. The console uses this to show its window again.
+    pub fn add_removed_tile(&mut self, removed: RemovedTile<W>, activate: ActivateWindow) {
+        let RemovedTile {
+            tile,
+            width,
+            is_full_width,
+            is_floating,
+        } = removed;
+
+        match &mut self.monitor_set {
+            MonitorSet::Normal {
+                monitors,
+                active_monitor_idx,
+                ..
+            } => {
+                monitors[*active_monitor_idx].add_tile(
+                    tile,
+                    MonitorAddWindowTarget::Auto,
+                    activate,
+                    true,
+                    width,
+                    is_full_width,
+                    is_floating,
+                    None,
+                );
+            }
+            MonitorSet::NoOutputs { workspaces } => {
+                if workspaces.is_empty() {
+                    workspaces.push(Workspace::new_no_outputs(
+                        self.clock.clone(),
+                        self.options.clone(),
+                    ));
+                }
+
+                workspaces[0].add_tile(
+                    tile,
+                    WorkspaceAddWindowTarget::Auto,
+                    activate,
+                    width,
+                    is_full_width,
+                    is_floating,
+                    None,
+                );
+            }
+        }
     }
 
     pub fn descendants_added(&mut self, id: &W::Id) -> bool {

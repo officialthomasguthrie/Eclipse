@@ -908,6 +908,15 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         session_id: u64,
     },
+    /// Show or hide the console, and start it when it is not running.
+    ToggleConsole {
+        /// App id of the console's window.
+        #[cfg_attr(feature = "clap", arg(long))]
+        app_id: String,
+        /// Command that starts the console.
+        #[cfg_attr(feature = "clap", arg(last = true, required = true))]
+        command: Vec<String>,
+    },
     /// Toggle (open/close) the Overview.
     ToggleOverview {},
     /// Open the Overview.

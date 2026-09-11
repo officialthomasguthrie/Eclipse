@@ -10,6 +10,21 @@
 let
   cfg = config.eclipse.umbra;
   umbra = self.packages.${pkgs.stdenv.hostPlatform.system}.umbra;
+  # the console: a terminal that drops down from the top of the screen over whatever is open. the
+  # bind shows or hides the window with this app id, and starts ghostty with it when there is none
+  console = {
+    appId = "dev.eclipse.Console";
+    height = 400;
+  };
+  # ghostty's settings, written into the owner's home once, when there is no file yet. tmpfiles
+  # turns the \n into new lines
+  ghosttySettings = lib.concatStringsSep "\\n" [
+    "font-family = DejaVu Sans Mono"
+    "font-size = 11"
+    "background = #282828"
+    "foreground = #d4d4d4"
+    "window-theme = dark"
+  ];
   # the system config. the binary still reads the niri paths: /etc/niri/config.kdl here, and a
   # file at ~/.config/niri/config.kdl replaces it for that user
   configFile = pkgs.writeText "umbra-config.kdl" ''
@@ -39,6 +54,16 @@ let
     }
 
     prefer-no-csd
+
+    // the console floats along the top of the working area, under corona's panel, full width
+    window-rule {
+        match app-id=r#"^${lib.escapeRegex console.appId}$"#
+        open-floating true
+        open-focused true
+        default-column-width { proportion 1.0; }
+        default-window-height { fixed ${toString console.height}; }
+        default-floating-position x=0 y=0 relative-to="top-left"
+    }
     ${lib.concatMapStringsSep "\n" (
       command: "spawn-at-startup " + lib.concatMapStringsSep " " (word: ''"${word}"'') command
     ) cfg.startup}
@@ -52,6 +77,7 @@ let
     binds {
         Mod+Shift+Slash hotkey-overlay-title="Show these shortcuts" { show-hotkey-overlay; }
         Mod+T hotkey-overlay-title="Open a terminal" { spawn "ghostty"; }
+        Mod+Grave hotkey-overlay-title="Show or hide the console" { toggle-console app-id="${console.appId}" "${config.systemd.package}/bin/systemd-cat" "-t" "console" "ghostty" "--class=${console.appId}"; }
         Mod+Q hotkey-overlay-title="Close the window" { close-window; }
         Mod+O repeat=false hotkey-overlay-title="Show all workspaces" { toggle-overview; }
 
@@ -140,6 +166,10 @@ in
     services.displayManager.enable = false;
 
     environment.etc."niri/config.kdl".source = configFile;
+    systemd.user.tmpfiles.rules = [
+      "d %h/.config/ghostty 0755 - - -"
+      "f %h/.config/ghostty/config.ghostty 0644 - - - ${ghosttySettings}"
+    ];
     environment.systemPackages = [
       umbra
       pkgs.ghostty

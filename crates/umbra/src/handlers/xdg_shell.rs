@@ -886,6 +886,22 @@ impl XdgShellHandler for State {
             return;
         }
 
+        if self
+            .niri
+            .hidden_console
+            .as_ref()
+            .is_some_and(|removed| removed.window().toplevel().wl_surface() == surface.wl_surface())
+        {
+            // The console's window got destroyed while the console was hidden. Dropping its tile
+            // removes the mapped pre-commit hook.
+            self.niri.hidden_console = None;
+            let surface = surface.wl_surface();
+            if surface.is_alive() {
+                self.add_default_dmabuf_pre_commit_hook(surface);
+            }
+            return;
+        }
+
         let win_out = self
             .niri
             .layout

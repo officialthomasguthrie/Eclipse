@@ -175,6 +175,11 @@ RESULT_ROWS = 3
 ERROR_LINE = "wifi dance"
 # a question with a short answer. the model runs on the cpu, next to umbra's software renderer
 QUESTION = "What is the capital of France?"
+# the console, from nix/modules/umbra.nix: ghostty's background, the height the window rule gives
+# the window in logical pixels, and the app id the bind shows and hides
+CONSOLE = (40, 40, 40)
+CONSOLE_HEIGHT = 400
+CONSOLE_APP_ID = "dev.eclipse.Console"
 
 
 def near(pixel, color, tolerance):
@@ -287,6 +292,56 @@ def check_desktop(width, height, rgb, corona=False, rows=0, error=False):
     ok = True
     for name, passed, detail in checks:
         lines.append(f"desktop: {'ok  ' if passed else 'FAIL'} {name}: {detail}")
+        ok = ok and passed
+    return ok, lines
+
+
+def check_console(width, height, rgb):
+    """Find the console in a screendump: corona's panel along the top, under it a run of rows that
+    are mostly the console's background, and the desktop under that. Returns (ok, lines to print)."""
+    gray = black = 0
+    panel_rows = 0
+    console_top, console_rows, console_width = -1, 0, 0
+    for y in range(height):
+        row = y * width * 3
+        row_panel = row_console = 0
+        for x in range(width):
+            px = rgb[row + x * 3 : row + x * 3 + 3]
+            if near(px, CONSOLE, 1):
+                row_console += 1
+            elif near(px, DESKTOP, 3):
+                gray += 1
+            elif near(px, MOON, 8):
+                black += 1
+            elif near(px, PANEL, 3) or near(px, FIELD, 3):
+                row_panel += 1
+        if row_panel > width / 2 and panel_rows == y:
+            panel_rows += 1
+        # the first run of rows that are mostly the console's gray. a line of text in the terminal
+        # covers only some of a row
+        if row_console > width / 2 and (console_top < 0 or console_top + console_rows == y):
+            if console_top < 0:
+                console_top = y
+            console_rows += 1
+            console_width = max(console_width, row_console)
+    total = width * height
+    scale = panel_rows / PANEL_HEIGHT if panel_rows else 1
+    wanted = CONSOLE_HEIGHT * scale
+    below = total - (panel_rows + console_rows) * width
+    checks = [
+        ("no console black", black <= 0.02 * total, f"{black} of {total}"),
+        ("the panel is along the top", 0.9 * PANEL_HEIGHT <= panel_rows <= 3 * PANEL_HEIGHT, f"{panel_rows} rows"),
+        ("the console starts under the panel", console_top >= 0 and panel_rows <= console_top <= panel_rows + 16 * scale,
+         f"first row {console_top}, the panel ends at {panel_rows}"),
+        ("the console is as tall as the window rule says", 0.95 * wanted <= console_rows <= 1.05 * wanted,
+         f"{console_rows} rows, expected about {wanted:.0f}"),
+        ("the console is as wide as the screen", console_width >= 0.9 * width, f"{console_width} of {width} in its widest row"),
+        ("the desktop background covers the rest", gray >= 0.9 * below, f"{gray} of {below}"),
+    ]
+    lines = [f"console: {width}x{height}"]
+    ok = True
+    for name, passed, detail in checks:
+        lines.append(f"console: {'ok  ' if passed else 'FAIL'} {name}: {detail}")
         ok = ok and passed
     return ok, lines
 
@@ -706,21 +761,28 @@ def main():
         if state != "active":
             fail(f"greetd.service is {state}, expected active")
 
-        def look(what, png, seconds, **shape):
-            """Screendump until the panel has the shape we asked for, or give up and save it."""
+        def look(what, png, seconds, console=False, journals=(), **shape):
+            """Screendump until the panel has the shape we asked for, or the console is open, or
+            give up and save it. On a failure the journal of each tag in journals is printed."""
             deadline = time.monotonic() + seconds
             while True:
                 try:
                     width, height, rgb = screendump(args.qmp, work, "desktop")
                 except (OSError, RuntimeError) as e:
                     fail(f"screendump: {e}")
-                good, lines = check_desktop(width, height, rgb, corona=args.corona, **shape)
+                if console:
+                    good, lines = check_console(width, height, rgb)
+                else:
+                    good, lines = check_desktop(width, height, rgb, corona=args.corona, **shape)
                 if good or time.monotonic() > deadline:
                     break
-                time.sleep(2 if shape else 5)
+                time.sleep(2 if shape or console else 5)
             write_png(png, width, height, rgb)
             print("\nboot-test: " + "\nboot-test: ".join(lines), flush=True)
             if not good:
+                for tag in journals:
+                    _, output = run(f"journalctl -b -t {tag} --no-pager -n 40 -o cat", f"the {tag} journal")
+                    print(f"\nboot-test: journalctl -t {tag} printed:\n{without_console(output)}", flush=True)
                 fail(f"{what} is not on screen, see {png}")
             ok(what)
 
@@ -748,7 +810,63 @@ def main():
             run("corona --escape", "escape in the field")
             look("the panel back at the field", f"{stem}-corona-empty{extension}", 20, rows=0)
 
-            # 5c. a question for aura, from the terminal first, which prints the answer here, and
+            # 5c. the console. Mod+Grave runs toggle-console with the arguments in
+            # nix/modules/umbra.nix, and umbra msg runs the same action without the key. the first
+            # time it starts ghostty, after that it hides and shows that same window
+            status, printed = run("ghostty +validate-config", "ghostty's settings")
+            printed = without_console(printed).strip()
+            if status != 0 or printed:
+                fail(f"ghostty does not take the settings file the image writes: {printed!r}")
+            toggle = (f"umbra msg action toggle-console --app-id {CONSOLE_APP_ID} -- "
+                      f"systemd-cat -t console ghostty --class={CONSOLE_APP_ID}")
+
+            def console_window():
+                """(id, pid) of the console's window in umbra's list, or None when it is not there."""
+                status, output = run("umbra msg --json windows", "umbra's windows")
+                output = without_console(output).replace("\n", "")
+                if status != 0 or "[" not in output:
+                    fail(f"umbra msg windows exited with {status}: {output.strip()[-300:]!r}")
+                window = re.search(r'\{"id":(\d+),"title":(?:null|"(?:[^"\\]|\\.)*"),"app_id":"'
+                                   + re.escape(CONSOLE_APP_ID) + r'","pid":(\d+)', output)
+                return (int(window.group(1)), int(window.group(2))) if window else None
+
+            def children(pid, what):
+                _, output = run(f"pgrep -P {pid}", what)
+                return re.findall(r"^\s*(\d+)\s*$", without_console(output), re.M)
+
+            run(toggle, "the show action")
+            look("the console", f"{stem}-console{extension}", 60, console=True, journals=("console", "umbra"))
+            window = console_window()
+            if not window:
+                fail("umbra lists no console window after the show action")
+            window_id, pid = window
+            programs = children(pid, "the program in the console")
+            if not programs:
+                fail(f"ghostty {pid} runs nothing in the console")
+            shell = programs[0]
+            ok(f"the console is open under the panel, window {window_id}, ghostty {pid}, shell {shell}")
+
+            run(toggle, "the hide action")
+            look("the desktop and the panel with the console hidden", f"{stem}-console-hidden{extension}", 20, rows=0)
+            if console_window():
+                fail("umbra still lists the console window after the hide action")
+            status, _ = run(f"kill -0 {shell}", "the shell in the hidden console")
+            if status != 0:
+                fail(f"the console's shell {shell} ended when the console was hidden")
+            ok(f"the console is hidden and its shell {shell} still runs")
+
+            run(toggle, "the show action again")
+            look("the console again", f"{stem}-console-again{extension}", 20, console=True, journals=("console", "umbra"))
+            again = console_window()
+            if again != window:
+                fail(f"the console came back as {again}, expected window {window_id} of ghostty {pid}")
+            if shell not in children(pid, "the program in the console again"):
+                fail(f"the console's shell {shell} is gone after showing it again")
+            run(toggle, "the hide action again")
+            look("the panel back without the console", f"{stem}-console-closed{extension}", 20, rows=0)
+            ok(f"the same console came back with shell {shell} and went away again")
+
+            # 5d. a question for aura, from the terminal first, which prints the answer here, and
             # then typed into the field. the answer is as many rows as the model makes it, so the
             # list is only expected to have at least one
             if args.models:

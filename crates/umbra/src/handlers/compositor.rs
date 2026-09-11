@@ -258,6 +258,26 @@ impl CompositorHandler for State {
                 return;
             }
 
+            // The console's window while the console is hidden: still mapped, not in the layout.
+            let hidden_console = self.niri.hidden_console.as_ref().and_then(|removed| {
+                let mapped = removed.window();
+                (mapped.toplevel().wl_surface() == surface).then(|| mapped.window.clone())
+            });
+            if let Some(window) = hidden_console {
+                window.on_commit();
+
+                if !is_mapped(surface) {
+                    // It unmapped while hidden, so it starts over like any other toplevel. Dropping
+                    // its tile removes the mapped pre-commit hook.
+                    self.niri.hidden_console = None;
+                    self.add_default_dmabuf_pre_commit_hook(surface);
+                    self.niri
+                        .unmapped_windows
+                        .insert(surface.clone(), Unmapped::new(window));
+                }
+                return;
+            }
+
             // This is a commit of a previously-mapped root or a non-toplevel root.
             if let Some((mapped, output)) = self.niri.layout.find_window_and_output(surface) {
                 let window = mapped.window.clone();
