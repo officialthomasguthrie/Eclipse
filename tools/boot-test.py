@@ -8,12 +8,14 @@ Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeou
 <eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds the persist
 partition to the image with the passphrase from the passfile (persist-image.sh, through sudo), then
 boots the image as an nvme drive. Everything goes through the serial console: the luks prompt, the
-autologin shell, a few commands, the host profile syzygy wrote. The serial output is printed as it
-arrives and kept in the log file.
+autologin shell, a few commands, the default apps on the path, the host profile syzygy wrote. The
+serial output is printed as it arrives and kept in the log file.
 
 With --models the files in that directory go into the @models subvolume before boot. The test waits
 on the system bus until aurad has loaded the model it picked for syzygy's tier, checks that it is the
 one in the directory, asks the local api for a short completion and asks aura a question over the bus.
+The local api has to refuse the same completion when the request comes with a web page's Origin or
+Host header, and the owner must not reach llama-server's socket behind it.
 
 With --splash the test also takes a screendump through the qemu monitor while the luks prompt is up
 and checks that the Totality splash is on screen: the light disc and the black disc from
@@ -424,6 +426,25 @@ def main():
     expect([PROMPT], "the prompt")
     ok(f"{version.strip()}, phase {phase}, home on persist")
 
+    # 2a. the default apps are on the path, firefox has its policies, zed got its settings with
+    # telemetry off, and podman runs rootless in the owner's ranges
+    apps = ["firefox", "zeditor", "hx", "zellij", "ghostty", "fish", "podman", "docker"]
+    _, output = run("for app in " + " ".join(apps) + "; command -q $app; or echo missing=$app; end; echo apps-done",
+                    "the default apps on the path")
+    missing = re.findall(r"missing=(\S+)", output)
+    if missing or "apps-done" not in output:
+        fail(f"not on the path: {' '.join(missing) or repr(output.strip())}")
+    status, _ = run("grep -q DisableTelemetry /etc/firefox/policies/policies.json", "firefox's policies")
+    if status != 0:
+        fail("firefox has no policies file that turns telemetry off")
+    status, output = run("cat ~/.config/zed/settings.json", "zed's settings")
+    if status != 0 or '"metrics":false' not in output:
+        fail(f"zed's settings do not turn telemetry off: {output.strip()!r}")
+    status, output = run("podman info --format 'rootless={{.Host.Security.Rootless}}'", "podman info")
+    if status != 0 or "rootless=true" not in output:
+        fail(f"podman does not run rootless for the owner: {output.strip()[-600:]!r}")
+    ok(f"{', '.join(apps)} on the path, firefox policies, zed settings, podman rootless")
+
     # 3. syzygy: the profile it wrote into @hosts, and the same answers on the system bus.
     # fish puts a bare \r before a command's output, so these anchor on the whitespace after the
     # value, not before it
@@ -582,6 +603,26 @@ def main():
             fail(f"the local api gave no completion: {output.strip()!r}")
         ok(f"the local api completed {content.group(1)!r}")
 
+        # a web page cannot use it. a browser sends an Origin header with anything a page asks
+        # for, and a page that points its own name at 127.0.0.1 sends that name as the Host. the
+        # model's socket behind the api is aura's alone
+        def api_code(options, what):
+            _, output = run(f"curl -s -o /dev/null -w 'code=%{{http_code}}\\n' {options}", what)
+            code = re.search(r"code=(\d{3})", output)
+            return code.group(1) if code else output.strip()
+
+        for header, what in [
+            ("Origin: https://example.com", "a completion a web page asked for"),
+            ("Host: example.com:11434", "a completion for a name that is not the loopback address"),
+        ]:
+            code = api_code(f"-H '{header}' {api}/completion -d '{body}'", what)
+            if code != "403":
+                fail(f"the local api answered {what} with {code}, expected 403")
+        code = api_code("--unix-socket /run/aura/llama.sock http://localhost/health", "llama-server's socket")
+        if code != "000":
+            fail(f"the owner reached llama-server's socket without the local api, it said {code}")
+        ok("the local api refuses web pages, and only aura opens the model's socket")
+
         # and the question over the bus, as the owner, no sudo. Ask returns a kind and a text, and
         # busctl's json keeps both on one line with their quotes escaped
         _, output = run(f"busctl --system --json=short --timeout=240 call {aura} {aura_path} {aura} Ask s '{QUESTION}'",
@@ -651,9 +692,12 @@ def main():
             # list is only expected to have at least one
             if args.models:
                 status, output = run(f'corona --do "{QUESTION}"', "aura's answer through corona")
-                if status != 0 or not output.strip():
+                # the journal's lines on the console land in the output too
+                said = "\n".join(line for line in output.splitlines()
+                                 if line.strip() and not re.match(r"\s*\[\s*\d+\.\d+\] ", line))
+                if status != 0 or not said:
                     fail(f"corona --do could not ask aura: {output.strip()!r}")
-                ok(f"corona asked aura and printed {output.strip()!r}")
+                ok(f"corona asked aura and printed {said!r}")
 
                 run(f'corona --enter "{QUESTION}"', "a question typed into the field")
                 look("the answer under the field", f"{stem}-corona-answer{extension}", args.answer_timeout,

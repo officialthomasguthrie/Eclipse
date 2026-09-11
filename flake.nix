@@ -54,6 +54,7 @@
             ./nix/kernel
             ./nix/image
             ./nix/profiles/base.nix
+            ./nix/profiles/apps.nix
             ./nix/profiles/phase0.nix
           ];
         };

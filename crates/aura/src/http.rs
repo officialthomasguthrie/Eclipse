@@ -1,13 +1,11 @@
-//! Just enough HTTP/1.1 to talk to llama-server on the loopback address: one request per
-//! connection, a reply framed by its length, by chunks, or by the server closing the connection.
+//! Just enough HTTP/1.1 to talk to llama-server on its unix socket: one request per connection, a
+//! reply framed by its length, by chunks, or by the server closing the connection.
 
 use std::fmt::Write as _;
 use std::io::{self, Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::time::Duration;
-
-/// How long a connection to the loopback address may take before the server counts as down.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A reply: the status code and the body.
 #[derive(Debug, PartialEq, Eq)]
@@ -18,23 +16,22 @@ pub struct Reply {
     pub body: Vec<u8>,
 }
 
-/// Sends one request to `127.0.0.1:<port>` and reads the reply. A body is sent as JSON.
+/// Sends one request to the server on `socket` and reads the reply. A body is sent as JSON.
 ///
 /// # Errors
 ///
 /// When nothing listens, the timeout passes, or the reply is not HTTP.
 pub fn send(
-    port: u16,
+    socket: &Path,
     method: &str,
     path: &str,
     body: Option<&str>,
     timeout: Duration,
 ) -> io::Result<Reply> {
-    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let mut stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT)?;
+    let mut stream = UnixStream::connect(socket)?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
-    stream.write_all(request(method, path, port, body).as_bytes())?;
+    stream.write_all(request(method, path, body).as_bytes())?;
 
     let mut raw = Vec::new();
     let mut buffer = [0u8; 8192];
@@ -50,9 +47,8 @@ pub fn send(
 }
 
 /// The request as it goes on the wire.
-pub fn request(method: &str, path: &str, port: u16, body: Option<&str>) -> String {
-    let mut text =
-        format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n");
+pub fn request(method: &str, path: &str, body: Option<&str>) -> String {
+    let mut text = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
     if let Some(body) = body {
         let _ = write!(
             text,
@@ -146,7 +142,8 @@ fn dechunk(mut body: &[u8]) -> Result<Option<Vec<u8>>, String> {
     }
 }
 
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+/// Where `needle` first starts in `haystack`.
+pub fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
@@ -159,13 +156,13 @@ mod tests {
     #[test]
     fn a_request_with_a_body_says_how_long_it_is() {
         assert_eq!(
-            request("POST", "/v1/chat/completions", 11434, Some("{\"a\":1}")),
-            "POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:11434\r\nConnection: close\r\n\
+            request("POST", "/v1/chat/completions", Some("{\"a\":1}")),
+            "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\
              Content-Type: application/json\r\nContent-Length: 7\r\n\r\n{\"a\":1}"
         );
         assert_eq!(
-            request("GET", "/health", 11434, None),
-            "GET /health HTTP/1.1\r\nHost: 127.0.0.1:11434\r\nConnection: close\r\n\r\n"
+            request("GET", "/health", None),
+            "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
         );
     }
 

@@ -1,8 +1,10 @@
 //! A question to the model and the answer out of its reply. The request goes to llama-server's
-//! chat completions endpoint, the same one anything else on the machine can use. What the model
+//! chat completions endpoint, the same one anything else on the machine reaches through the local
+//! api. What the model
 //! says is either an answer in words or the words of one of Corona's OS commands, which it marks
 //! with an `ACTION:` first line.
 
+use std::path::Path;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -130,15 +132,15 @@ impl Reply {
     }
 }
 
-/// Asks the model on `127.0.0.1:<port>` and returns what it said.
+/// Asks the model behind `socket` and returns what it said.
 ///
 /// # Errors
 ///
 /// A sentence that says why there is no answer.
-pub fn ask(port: u16, question: &str) -> Result<Reply, String> {
+pub fn ask(socket: &Path, question: &str) -> Result<Reply, String> {
     let body = request(question, MAX_TOKENS);
     let response = http::send(
-        port,
+        socket,
         "POST",
         "/v1/chat/completions",
         Some(&body),

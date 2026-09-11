@@ -5,6 +5,7 @@
 //! properties say which model runs, for which tier, and whether it answers yet; every change to
 //! them is signalled, so a client can wait for `ready` without polling.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use libeclipse::Component;
@@ -19,7 +20,7 @@ const LONGEST_QUESTION: usize = 4000;
 /// The object that answers on the bus.
 pub struct Aura {
     status: Arc<Mutex<Status>>,
-    port: u16,
+    socket: PathBuf,
 }
 
 impl Aura {
@@ -37,8 +38,8 @@ impl Aura {
     #[zbus(out_args("kind", "text"))]
     async fn ask(&self, question: String) -> fdo::Result<(String, String)> {
         let question = admit(&question, &self.status())?;
-        let port = self.port;
-        let reply = blocking::unblock(move || chat::ask(port, &question))
+        let socket = self.socket.clone();
+        let reply = blocking::unblock(move || chat::ask(&socket, &question))
             .await
             .map_err(fdo::Error::Failed)?;
         Ok((reply.kind().to_string(), reply.into_text()))
@@ -89,14 +90,18 @@ fn admit(question: &str, status: &Status) -> fdo::Result<String> {
     }
 }
 
-/// Connects to the system bus and serves the object. The name comes later, from `take_name`.
+/// Connects to the system bus and serves the object, which asks the model behind `socket`. The
+/// name comes later, from `take_name`.
 ///
 /// # Errors
 ///
 /// When the system bus is not there.
-pub fn connect(status: Arc<Mutex<Status>>, port: u16) -> zbus::Result<zbus::blocking::Connection> {
+pub fn connect(
+    status: Arc<Mutex<Status>>,
+    socket: PathBuf,
+) -> zbus::Result<zbus::blocking::Connection> {
     zbus::blocking::connection::Builder::system()?
-        .serve_at(Component::Aura.dbus_path(), Aura { status, port })?
+        .serve_at(Component::Aura.dbus_path(), Aura { status, socket })?
         .build()
 }
 

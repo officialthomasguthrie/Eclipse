@@ -78,6 +78,30 @@ jobs:
       - name: Build
         id: build
         run: nix build .#image -L --print-build-logs --keep-failed || { echo "failed=1" >> "$GITHUB_OUTPUT"; exit 1; }
+      - name: Report the size of the store partition
+        # the store has to fit its 8G slot. repart makes the partition as big as what is in it, so
+        # its size in the partition table is the number that counts
+        run: |
+          img=$(ls result/*.raw | head -n1)
+          table=$(sfdisk -J "$img")
+          size() {
+            jq -r --arg name "$1" '.partitiontable as $t | $t.partitions[] | select(.name == $name) | .size * ($t.sectorsize // 512)' <<<"$table"
+          }
+          store=$(size store)
+          verity=$(size store-verity)
+          if [ -z "$store" ]; then
+            echo "::error::The image has no partition named store."
+            sfdisk -l "$img"
+            exit 1
+          fi
+          budget=$((8 * 1024 * 1024 * 1024))
+          line="Store partition $(numfmt --to=iec-i --suffix=B "$store") ($store bytes) of 8.0GiB, verity $(numfmt --to=iec-i --suffix=B "${verity:-0}")"
+          echo "$line"
+          if [ "$store" -gt "$budget" ]; then
+            echo "::error title=Store partition::$line. It is over its budget."
+            exit 1
+          fi
+          echo "::notice title=Store partition::$line"
       - name: Diagnose
         if: failure() && steps.build.outputs.failed == '1'
         run: |

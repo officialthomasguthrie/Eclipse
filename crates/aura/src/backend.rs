@@ -1,8 +1,11 @@
-//! llama-server as aurad's child. aurad picks the model, starts the server on the loopback
-//! address, marks it ready once the model has loaded, and starts it again when it stops. The
+//! llama-server as aurad's child. aurad picks the model, starts the server on a unix socket in its
+//! own runtime directory, marks it ready once the model has loaded, and starts it again when it
+//! stops. Nothing but aura's user can open the socket; everything else on the machine goes through
+//! the local api in `api`. The
 //! models directory is looked at again every time, so a model copied onto the drive is picked up
 //! without touching the unit.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, PoisonError};
@@ -80,21 +83,19 @@ pub struct Backend {
     pub program: PathBuf,
     /// Where the weights are.
     pub models_dir: PathBuf,
-    /// The loopback port it listens on.
-    pub port: u16,
+    /// The unix socket it listens on. llama-server takes a host name that ends in `.sock` as one.
+    pub socket: PathBuf,
     /// Context size in tokens.
     pub ctx_size: u32,
 }
 
 impl Backend {
-    /// llama-server's arguments for one model. It listens on the loopback address only, serves
-    /// no web page and never fetches anything.
+    /// llama-server's arguments for one model. It listens on the unix socket only, serves no web
+    /// page and never fetches anything.
     pub fn args(&self, model: &Path, alias: &str) -> Vec<String> {
         [
             "--host",
-            "127.0.0.1",
-            "--port",
-            &self.port.to_string(),
+            &self.socket.display().to_string(),
             "--model",
             &model.display().to_string(),
             "--alias",
@@ -157,6 +158,8 @@ impl Backend {
             let model = pick.chat.id.as_str();
             let path = self.models_dir.join(&pick.chat.file);
             update(State::Loading, model, "");
+            // a server that stopped leaves its socket behind, and a new one cannot bind over it
+            let _ = fs::remove_file(&self.socket);
             let started = Instant::now();
             let exit = match Command::new(&self.program)
                 .args(self.args(&path, model))
@@ -174,7 +177,7 @@ impl Backend {
                                 break e.to_string();
                             }
                         }
-                        if !loaded && healthy(self.port) {
+                        if !loaded && healthy(&self.socket) {
                             loaded = true;
                             update(State::Ready, model, "");
                             println!("aura: {model} loaded in {} s", started.elapsed().as_secs());
@@ -201,8 +204,9 @@ impl Backend {
 }
 
 /// True once llama-server has loaded its model.
-fn healthy(port: u16) -> bool {
-    http::send(port, "GET", "/health", None, HEALTH_TIMEOUT).is_ok_and(|reply| reply.status == 200)
+fn healthy(socket: &Path) -> bool {
+    http::send(socket, "GET", "/health", None, HEALTH_TIMEOUT)
+        .is_ok_and(|reply| reply.status == 200)
 }
 
 /// How long to wait before starting the server again, after it ran for `ran` and the last wait
@@ -220,11 +224,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_server_listens_on_loopback_and_fetches_nothing() {
+    fn the_server_listens_on_its_socket_and_fetches_nothing() {
         let backend = Backend {
             program: PathBuf::from("llama-server"),
             models_dir: PathBuf::from("/var/lib/eclipse/models"),
-            port: 11434,
+            socket: PathBuf::from("/run/aura/llama.sock"),
             ctx_size: 8192,
         };
         let args = backend.args(
@@ -235,8 +239,8 @@ mod tests {
             let at = args.iter().position(|arg| arg == flag).unwrap();
             args[at + 1].as_str()
         };
-        assert_eq!(after("--host"), "127.0.0.1");
-        assert_eq!(after("--port"), "11434");
+        assert_eq!(after("--host"), "/run/aura/llama.sock");
+        assert!(!args.iter().any(|arg| arg == "--port"));
         assert_eq!(
             after("--model"),
             "/var/lib/eclipse/models/Qwen3-0.6B-Q8_0.gguf"

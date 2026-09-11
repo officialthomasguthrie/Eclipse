@@ -1,24 +1,29 @@
 //! aurad: Aura's daemon. It picks a chat model from the manifest for the tier Syzygy reports,
-//! runs llama-server on the loopback address as its child, and answers questions on the system
-//! bus as `dev.eclipse.Aura`.
+//! runs llama-server on a unix socket as its child, serves the local api on the loopback address in
+//! front of it, and answers questions on the system bus as `dev.eclipse.Aura`.
 
+mod api;
 mod backend;
 mod bus;
 mod chat;
 mod http;
 mod models;
 
-use std::path::PathBuf;
+use std::net::{Ipv4Addr, TcpListener};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::thread;
 
 use backend::{Backend, Status};
 use libeclipse::Component;
 use models::{Manifest, Tier};
 
-/// llama-server's port. Ollama's, so tools that look for a local model find this one.
+/// The local api's port. Ollama's, so tools that look for a local model find this one.
 const PORT: u16 = 11434;
+/// llama-server's socket, in the runtime directory systemd gives aura's user alone.
+const SOCKET: &str = "/run/aura/llama.sock";
 /// Context size in tokens.
 const CTX_SIZE: u32 = 8192;
 
@@ -27,6 +32,7 @@ struct Args {
     models_dir: PathBuf,
     llama_server: PathBuf,
     port: u16,
+    socket: PathBuf,
     ctx_size: u32,
     model: Option<String>,
     tier: Option<Tier>,
@@ -53,7 +59,7 @@ fn main() -> ExitCode {
     let backend = Backend {
         program: args.llama_server,
         models_dir: args.models_dir,
-        port: args.port,
+        socket: args.socket,
         ctx_size: args.ctx_size,
     };
 
@@ -73,7 +79,21 @@ fn main() -> ExitCode {
     }
 
     let status = Arc::new(Mutex::new(Status::default()));
-    let connection = match bus::connect(Arc::clone(&status), backend.port) {
+    // the local api is up before the model is, so a program gets told the model is loading
+    // instead of finding nothing on the port
+    let listener = match TcpListener::bind((Ipv4Addr::LOCALHOST, args.port)) {
+        Ok(listener) => listener,
+        Err(e) => {
+            eprintln!("aurad: could not listen on 127.0.0.1:{}: {e}", args.port);
+            return ExitCode::FAILURE;
+        }
+    };
+    {
+        let socket = backend.socket.clone();
+        let status = Arc::clone(&status);
+        thread::spawn(move || api::serve(&listener, &socket, &status));
+    }
+    let connection = match bus::connect(Arc::clone(&status), backend.socket.clone()) {
         Ok(connection) => connection,
         Err(e) => {
             eprintln!("aurad: could not connect to the system bus: {e}");
@@ -118,6 +138,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Args>, St
         models_dir: PathBuf::from(libeclipse::paths::MODELS),
         llama_server: PathBuf::from("llama-server"),
         port: PORT,
+        socket: PathBuf::from(SOCKET),
         ctx_size: CTX_SIZE,
         model: None,
         tier: None,
@@ -129,6 +150,19 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Args>, St
             "--models-dir" => parsed.models_dir = value(&mut args, &arg, "a directory")?.into(),
             "--llama-server" => parsed.llama_server = value(&mut args, &arg, "a program")?.into(),
             "--port" => parsed.port = number(&value(&mut args, &arg, "a port")?, &arg)?,
+            "--socket" => {
+                let path = value(&mut args, &arg, "a file")?;
+                if Path::new(&path)
+                    .extension()
+                    .is_none_or(|extension| extension != "sock")
+                {
+                    return Err(format!(
+                        "--socket needs a file that ends in .sock, llama-server takes anything \
+                         else for a host name: {path}"
+                    ));
+                }
+                parsed.socket = path.into();
+            }
             "--ctx-size" => parsed.ctx_size = number(&value(&mut args, &arg, "a size")?, &arg)?,
             "--model" => parsed.model = Some(value(&mut args, &arg, "a model id or file")?),
             "--tier" => {
@@ -178,7 +212,8 @@ fn usage() {
         libeclipse::paths::MODELS
     );
     println!("  --llama-server <program> the inference server (default llama-server)");
-    println!("  --port <port>            its port on 127.0.0.1 (default {PORT})");
+    println!("  --port <port>            the local api's port on 127.0.0.1 (default {PORT})");
+    println!("  --socket <file>          llama-server's unix socket (default {SOCKET})");
     println!("  --ctx-size <tokens>      its context size (default {CTX_SIZE})");
     println!("  --model <id or file>     run this model instead of the one the tier picks");
     println!("  --tier <tier>            small, medium or large instead of asking syzygy");
@@ -202,6 +237,7 @@ mod tests {
         );
         assert_eq!(args.models_dir, PathBuf::from(libeclipse::paths::MODELS));
         assert_eq!(args.port, 11434);
+        assert_eq!(args.socket, PathBuf::from("/run/aura/llama.sock"));
         assert_eq!(args.ctx_size, 8192);
         assert_eq!(args.model, None);
         assert_eq!(args.tier, None);
@@ -219,6 +255,8 @@ mod tests {
             "/bin/llama-server",
             "--port",
             "8080",
+            "--socket",
+            "/tmp/llama.sock",
             "--ctx-size",
             "4096",
             "--model",
@@ -233,6 +271,7 @@ mod tests {
         assert_eq!(args.models_dir, PathBuf::from("/tmp/models"));
         assert_eq!(args.llama_server, PathBuf::from("/bin/llama-server"));
         assert_eq!(args.port, 8080);
+        assert_eq!(args.socket, PathBuf::from("/tmp/llama.sock"));
         assert_eq!(args.ctx_size, 4096);
         assert_eq!(args.model.as_deref(), Some("qwen3-4b-q4_k_m"));
         assert_eq!(args.tier, Some(Tier::Medium));
@@ -243,6 +282,7 @@ mod tests {
     fn mistakes() {
         assert!(parse(&["--port"]).is_err());
         assert!(parse(&["--port", "many"]).is_err());
+        assert!(parse(&["--socket", "/tmp/llama"]).is_err());
         assert!(parse(&["--tier", "huge"]).is_err());
         assert!(parse(&["--bogus"]).is_err());
         assert!(parse(&["--version"]).unwrap().is_none());

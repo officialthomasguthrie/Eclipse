@@ -1,6 +1,7 @@
 # aura: local ai. aurad picks a chat model from the manifest for the tier syzygy reports, runs
-# llama-server (vulkan + cpu) on the loopback address as its child and answers on the system bus
-# as dev.eclipse.Aura. whisper and piper come later.
+# llama-server (vulkan + cpu) as its child on a unix socket only aura's user can open, serves the
+# local api on 127.0.0.1 in front of it and answers on the system bus as dev.eclipse.Aura.
+# whisper and piper come later.
 {
   config,
   lib,
@@ -63,7 +64,7 @@ in
     port = lib.mkOption {
       type = lib.types.port;
       default = 11434;
-      description = "Localhost port for the OpenAI-compatible API.";
+      description = "Localhost port for the OpenAI-compatible API. aurad serves it and refuses requests from web pages.";
     };
 
     contextSize = lib.mkOption {
@@ -107,11 +108,15 @@ in
             "--models-dir ${cfg.modelsDir}"
             "--llama-server ${cfg.package}/bin/llama-server"
             "--port ${toString cfg.port}"
+            "--socket /run/aura/llama.sock"
             "--ctx-size ${toString cfg.contextSize}"
           ]
           ++ lib.optional (cfg.model != null) "--model ${cfg.model}"
         );
         Restart = "on-failure";
+        # llama-server's socket. nobody else may open it, the local api is the way in
+        RuntimeDirectory = "aura";
+        RuntimeDirectoryMode = "0700";
         User = "aura";
         Group = "aura";
         # llama-server is aurad's child, everything below holds for it too
