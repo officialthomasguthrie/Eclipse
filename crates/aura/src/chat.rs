@@ -9,20 +9,91 @@ use serde_json::{Value, json};
 
 use crate::http;
 
-/// What Aura tells the model before every question. The commands are the grammar Corona's field
-/// reads, and Corona runs nothing from a reply that does not read as one of them.
+/// What Aura tells the model before every question.
 pub const INSTRUCTIONS: &str = "You are Aura, the assistant in Eclipse OS, a personal operating \
 system that runs from a USB drive. Answer in one to three plain, short sentences. Do not greet, \
-do not apologize, and do not use markdown.\n\
-When the person wants the computer to do something that one of these commands does, reply with \
-one line only: ACTION: and the command, for example ACTION: wifi off. These are the only \
-commands:\n\
+do not apologize, and do not use markdown.";
+
+/// What Aura adds when the question is about one of the settings Corona's OS commands change.
+/// The commands are the grammar Corona's field reads, and Corona runs nothing from a reply that
+/// does not read as one of them.
+pub const COMMANDS: &str = "When the person wants the computer to do something that one of \
+these commands does, reply with one line only: ACTION: and the command, for example ACTION: wifi \
+off. These are the only commands:\n\
 wifi list, wifi status, wifi on, wifi off, wifi connect <network> [password]\n\
 display brightness, display brightness <0 to 100>, display brightness +10, display brightness \
 -10, display outputs\n\
 volume, volume <0 to 100>, volume up, volume down, volume mute, volume unmute\n\
 power off, power reboot, power suspend\n\
 For anything else, answer in words and do not write ACTION.";
+
+/// Words that put a question near wifi, the display, the sound or the power. A small model that
+/// is offered the commands with every question proposes one for questions that have nothing to
+/// do with them ("What is the capital of France?" came back as `display brightness +10`), so
+/// the commands only go with a question that has one of these words in it.
+const SETTING_WORDS: &[&str] = &[
+    "wifi",
+    "wi-fi",
+    "wireless",
+    "network",
+    "networks",
+    "internet",
+    "online",
+    "offline",
+    "hotspot",
+    "display",
+    "displays",
+    "screen",
+    "screens",
+    "monitor",
+    "monitors",
+    "brightness",
+    "bright",
+    "brighter",
+    "dim",
+    "dimmer",
+    "darker",
+    "outputs",
+    "volume",
+    "sound",
+    "audio",
+    "loud",
+    "louder",
+    "quiet",
+    "quieter",
+    "mute",
+    "unmute",
+    "speaker",
+    "speakers",
+    "power",
+    "restart",
+    "reboot",
+    "shutdown",
+    "shut",
+    "sleep",
+    "suspend",
+];
+
+/// Earlier turns of the chat that go before a question about a setting: two questions answered
+/// in words and three commands. On a bench with the test model they kept every question about a
+/// setting in words and turned every request into the right command; without them it wrote
+/// `volume +10` and answered some of those questions with a command.
+const EXAMPLES: &[(&str, &str)] = &[
+    (
+        "Is wifi slower than a cable?",
+        "Usually yes. A cable is faster and steadier than wifi.",
+    ),
+    ("Turn the sound down", "ACTION: volume down"),
+    (
+        "Why does my screen flicker?",
+        "A loose cable or a low refresh rate can make a screen flicker.",
+    ),
+    ("Put the computer to sleep", "ACTION: power suspend"),
+    ("Set the brightness to 70", "ACTION: display brightness 70"),
+];
+
+/// Sampling temperature. Low, so the same question gets the same kind of reply.
+const TEMPERATURE: f64 = 0.2;
 
 /// How the first line of a reply that proposes a command starts.
 const ACTION: &str = "ACTION:";
@@ -77,14 +148,37 @@ pub fn ask(port: u16, question: &str) -> Result<Reply, String> {
     answer(response.status, &response.body).and_then(|text| reply(&text))
 }
 
+/// True when the question has a word in it about one of the settings the commands change.
+pub fn about_settings(question: &str) -> bool {
+    question
+        .to_lowercase()
+        .split(|c: char| !(c.is_alphanumeric() || c == '-'))
+        .any(|word| SETTING_WORDS.contains(&word))
+}
+
+/// The instructions for one question: the commands go with it only when it is about a setting.
+pub fn instructions(question: &str) -> String {
+    if about_settings(question) {
+        format!("{INSTRUCTIONS}\n{COMMANDS}")
+    } else {
+        INSTRUCTIONS.to_string()
+    }
+}
+
 /// The request body for one question.
 pub fn request(question: &str, max_tokens: u32) -> String {
+    let mut messages = vec![json!({ "role": "system", "content": instructions(question) })];
+    if about_settings(question) {
+        for (asked, said) in EXAMPLES {
+            messages.push(json!({ "role": "user", "content": asked }));
+            messages.push(json!({ "role": "assistant", "content": said }));
+        }
+    }
+    messages.push(json!({ "role": "user", "content": question }));
     json!({
-        "messages": [
-            { "role": "system", "content": INSTRUCTIONS },
-            { "role": "user", "content": question },
-        ],
+        "messages": messages,
         "max_tokens": max_tokens,
+        "temperature": TEMPERATURE,
         // qwen3 thinks out loud before it answers unless it is told not to, and the thinking
         // takes the whole token budget on a small model
         "chat_template_kwargs": { "enable_thinking": false },
@@ -180,7 +274,77 @@ mod tests {
     }
 
     #[test]
-    fn the_instructions_name_the_mark_and_every_command() {
+    fn a_plain_question_is_not_offered_the_commands() {
+        for question in [
+            "What is the capital of France?",
+            "Who wrote Hamlet?",
+            "What is 12 times 7?",
+            "Why is the sky blue?",
+        ] {
+            assert!(!about_settings(question), "{question}");
+            assert_eq!(instructions(question), INSTRUCTIONS);
+            let body: Value = serde_json::from_str(&request(question, 64)).unwrap();
+            assert!(!body.to_string().contains("ACTION"), "{question}");
+        }
+    }
+
+    #[test]
+    fn a_question_about_a_setting_is_offered_the_commands() {
+        for question in [
+            "turn the wifi off",
+            "Is public Wi-Fi safe?",
+            "dim the screen",
+            "make it louder",
+            "mute the sound",
+            "restart the computer",
+            "put it to sleep",
+        ] {
+            assert!(about_settings(question), "{question}");
+            let body: Value = serde_json::from_str(&request(question, 64)).unwrap();
+            let system = body["messages"][0]["content"].as_str().unwrap();
+            assert!(system.starts_with(INSTRUCTIONS), "{question}");
+            assert!(system.ends_with(COMMANDS), "{question}");
+        }
+        // a word has to be the whole word
+        assert!(!about_settings("Who is Dimitri?"));
+        assert!(!about_settings("How does a powerline adapter work?"));
+    }
+
+    #[test]
+    fn a_question_about_a_setting_comes_after_the_examples() {
+        let body: Value = serde_json::from_str(&request("dim the screen", 64)).unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2 + 2 * EXAMPLES.len());
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages.last().unwrap()["role"], "user");
+        assert_eq!(messages.last().unwrap()["content"], "dim the screen");
+        assert_eq!(body["temperature"], TEMPERATURE);
+        let plain: Value = serde_json::from_str(&request("Who wrote Hamlet?", 64)).unwrap();
+        assert_eq!(plain["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(plain["temperature"], TEMPERATURE);
+    }
+
+    #[test]
+    fn the_examples_read_the_way_the_model_should_write() {
+        let mut commands = 0;
+        for (asked, said) in EXAMPLES {
+            assert!(about_settings(asked), "{asked}");
+            match reply(said) {
+                Ok(Reply::Action(words)) => {
+                    commands += 1;
+                    let first = words.split(' ').next().unwrap();
+                    assert!(COMMANDS.contains(&format!("{first} ")), "{words}");
+                }
+                Ok(Reply::Answer(_)) => assert!(!said.contains("ACTION"), "{said}"),
+                Err(why) => panic!("{why}"),
+            }
+        }
+        assert!(commands > 0 && commands < EXAMPLES.len());
+    }
+
+    #[test]
+    fn the_commands_name_the_mark_and_every_command() {
         for words in [
             "ACTION: wifi off",
             "wifi connect <network> [password]",
@@ -191,7 +355,7 @@ mod tests {
             "power off",
             "power suspend",
         ] {
-            assert!(INSTRUCTIONS.contains(words), "{words}");
+            assert!(COMMANDS.contains(words), "{words}");
         }
     }
 
