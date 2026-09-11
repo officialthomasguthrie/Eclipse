@@ -69,7 +69,7 @@ impl State {
         });
         if !starting {
             let (token, _) = self.niri.activation_state.create_external_token(None);
-            spawn(command, Some(token));
+            spawn(command, Some(token.clone()));
         }
     }
 
