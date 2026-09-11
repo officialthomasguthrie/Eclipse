@@ -5,12 +5,16 @@ runs this.
 Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeout 600] [--log serial.log]
        [--splash splash.png] [--desktop desktop.png] [--corona]
 
-<eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds the persist
-partition to the image with the passphrase from the passfile (persist-image.sh, through sudo), then
-boots the image as an nvme drive. Everything goes through the serial console: the luks prompt, the
-autologin shell, a few commands, the default apps on the path, the host profile syzygy wrote and
-what `eclipse host` and `eclipse doctor` print. The serial output is printed as it arrives and kept
-in the log file.
+<eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds slot b and the
+persist partition to the image with the passphrase from the passfile (persist-image.sh, through sudo),
+then boots the image as an nvme drive. Everything goes through the serial console: the luks prompt,
+the autologin shell, a few commands, the default apps on the path, the a/b slots, the host profile
+syzygy wrote and what `eclipse host` and `eclipse doctor` print. The serial output is printed as it
+arrives and kept in the log file.
+
+The slots: systemd-boot started the uki with a boot counter in its name, the boot reached
+boot-complete.target and the counter is gone, systemd-sysupdate lists the running version as
+installed, /usr runs from slot a, and slot b's two partitions are there and empty.
 
 With --models the files in that directory go into the @models subvolume before boot. The test waits
 on the system bus until aurad has loaded the model it picked for syzygy's tier, checks that it is the
@@ -191,6 +195,11 @@ LOCK_RING = 2
 # the owner's password from nix/profiles/base.nix, and one that is not it
 PASSWORD = "eclipse"
 WRONG_PASSWORD = "wrongpassword"
+# gpt partition types from the discoverable partitions specification: the esp, /usr on x86-64 and
+# its verity data. slot a and slot b each have a store and a verity partition
+ESP_TYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+USR_TYPE = "8484680c-9521-48c6-9c11-b0720656f69e"
+USR_VERITY_TYPE = "77ff5f63-e7b6-4633-acf4-1565b864c0e6"
 
 
 def near(pixel, color, tolerance):
@@ -595,6 +604,93 @@ def main():
     if status != 0 or "rootless=true" not in output:
         fail(f"podman does not run rootless for the owner: {output.strip()[-600:]!r}")
     ok(f"{', '.join(apps)} on the path, firefox policies, zed settings, podman rootless")
+
+    # 2b. the slots. systemd-boot started the uki with its boot counter, boot-complete.target was
+    # reached and systemd-bless-boot took the counter off the file name, sysupdate finds this version
+    # installed, /usr runs from slot a, and slot b's two partitions wait empty behind it
+    def check_slots():
+        """Check how this boot came up on the a/b layout and return the running version."""
+        status, output = run("grep '^IMAGE_VERSION=' /etc/os-release", "the image version")
+        found = re.search(r'^IMAGE_VERSION="?([^"\s]+)"?\s*$', without_console(output), re.M)
+        if status != 0 or not found:
+            fail(f"/etc/os-release has no IMAGE_VERSION: {without_console(output).strip()!r}")
+        version = found.group(1)
+        uki = f"eclipse_{version}.efi"
+
+        _, output = run("ls /dev/disk/by-designator/", "udev's names for the partitions of the boot drive")
+        print(f"\nboot-test: /dev/disk/by-designator holds:\n{without_console(output)}", flush=True)
+
+        _, output = run("sudo bootctl status --no-pager", "bootctl status")
+        printed = without_console(output)
+        print(f"\nboot-test: bootctl status printed:\n{printed}", flush=True)
+        loader = re.search(r"Current Boot Loader:\s*\n\s*Product:\s*(systemd-boot \S+)", printed)
+        if not loader:
+            fail("bootctl says this boot was not started by systemd-boot")
+        entry = re.search(r"Current Entry:\s*(\S+)", printed)
+        if not entry or entry.group(1) != uki:
+            fail(f"systemd-boot started {entry.group(1) if entry else 'no entry'}, expected {uki}")
+
+        # the boot is marked good once syzygy and greetd are up, a little after the shell
+        deadline = time.monotonic() + 120
+        while True:
+            _, output = run("systemctl is-active systemd-bless-boot", "systemd-bless-boot's state")
+            found = re.search(r"^(active|inactive|failed|activating)\s*$", without_console(output), re.M)
+            state = found.group(1) if found else without_console(output).strip()
+            if state == "active":
+                break
+            if state == "failed" or time.monotonic() > deadline:
+                _, output = run("systemctl status --no-pager systemd-bless-boot boot-complete.target",
+                                "why the boot was not marked good")
+                print(f"\nboot-test: systemctl status printed:\n{without_console(output)}", flush=True)
+                fail(f"systemd-bless-boot is {state} after {since()}, the boot was never marked good")
+            time.sleep(3)
+        blessed = since()
+
+        _, output = run("sudo /run/current-system/systemd/lib/systemd/systemd-bless-boot status",
+                        "the assessment of this boot")
+        found = re.search(r"^(good|bad|indeterminate|clean|dirty)\s*$", without_console(output), re.M)
+        if not found or found.group(1) != "good":
+            fail(f"systemd-bless-boot says {found.group(1) if found else without_console(output).strip()!r}, expected good")
+        _, output = run("sudo ls -1 /boot/EFI/Linux", "the ukis on the esp")
+        ukis = without_console(output).split()
+        if ukis != [uki]:
+            fail(f"the esp holds {ukis}, expected {uki} alone and without its boot counter")
+
+        _, output = run("sudo systemd-sysupdate --offline --json=short list", "systemd-sysupdate list")
+        found = re.search(r'^\{"current.*\}\s*$', without_console(output), re.M)
+        listing = json.loads(found.group(0)) if found else {}
+        if listing.get("current") != version or listing.get("all") != [version]:
+            fail(f"systemd-sysupdate lists {without_console(output).strip()[-600:]!r}, expected {version} installed "
+                 "and nothing else")
+
+        # esp, slot a, slot b in partition order, then persist
+        _, output = run("lsblk -brno NAME,PARTLABEL,PARTTYPE,SIZE /dev/(lsblk -no PKNAME /dev/disk/by-designator/esp)",
+                        "the partitions of the boot drive")
+        printed = without_console(output)
+        print(f"\nboot-test: lsblk printed:\n{printed}", flush=True)
+        parts = [row.split() for row in printed.splitlines()]
+        parts = [(name, label, kind.lower(), int(size)) for name, label, kind, size in (p for p in parts if len(p) == 4)]
+        gib = 1024**3
+        wanted = [
+            ("esp", ESP_TYPE, gib),
+            (f"store-verity_{version}", USR_VERITY_TYPE, gib),
+            (f"store_{version}", USR_TYPE, 8 * gib),
+            ("_empty", USR_VERITY_TYPE, gib),
+            ("_empty", USR_TYPE, 8 * gib),
+        ]
+        if [p[1:] for p in parts[:5]] != wanted or len(parts) < 6 or parts[5][1] != "persist":
+            fail(f"the boot drive's partitions are {[p[1:] for p in parts]}, expected {wanted} and then persist")
+
+        store_a = parts[2][0]
+        _, output = run("sudo veritysetup status usr", "the verity device under /usr")
+        data = re.search(r"data device:\s*(\S+)", without_console(output))
+        if not data or data.group(1) != f"/dev/{store_a}":
+            fail(f"/usr runs from {data.group(1) if data else without_console(output).strip()!r}, expected slot a on /dev/{store_a}")
+        ok(f"{loader.group(1)} started {uki}, the boot was marked good at {blessed} and the counter is gone, "
+           f"sysupdate lists {version} installed, /usr runs from slot a on {store_a}, slot b is empty")
+        return version
+
+    check_slots()
 
     # 3. syzygy: the profile it wrote into @hosts, and the same answers on the system bus.
     # fish puts a bare \r before a command's output, so these anchor on the whitespace after the

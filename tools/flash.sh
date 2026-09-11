@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # flasher for now, linux only. eclipse-flash replaces this later.
-# writes the image, then adds the optional exfat exchange partition and the persist partition (mkpersist.sh).
+# writes the image, then adds slot b (add-slot-b.sh), the optional exfat exchange partition and the
+# persist partition (mkpersist.sh).
 #
 # Usage: sudo tools/flash.sh <image.raw> /dev/sdX [exchange-size|none]   (default exchange: 8G)
 set -euo pipefail
@@ -16,16 +17,16 @@ if [[ "$(cat "/sys/block/$base/removable" 2>/dev/null)" != "1" && "${FORCE:-}" !
   echo "$dev is not a removable drive. Eclipse never touches internal disks. Set FORCE=1 if you are sure." >&2
   exit 1
 fi
-for tool in dd sgdisk partprobe; do
+for tool in dd sgdisk sfdisk partprobe; do
   command -v "$tool" >/dev/null || { echo "missing tool: $tool" >&2; exit 1; }
 done
+here=$(dirname "$(readlink -f "$0")")
 
 echo ">> Writing $image to $dev"
 dd if="$image" of="$dev" bs=4M status=progress conv=fsync
 sync
 
-echo ">> Moving the GPT backup header to the end of the drive"
-sgdisk -e "$dev"
+"$here/add-slot-b.sh" "$dev"
 
 if [[ "$exchange" != "none" ]]; then
   echo ">> Creating the $exchange exchange partition (exFAT)"
@@ -40,6 +41,6 @@ if [[ "$exchange" != "none" ]]; then
   command -v mkfs.exfat >/dev/null && mkfs.exfat -L EXCHANGE /dev/disk/by-partlabel/exchange
 fi
 
-"$(dirname "$(readlink -f "$0")")/mkpersist.sh" /dev/disk/by-partlabel/persist
+"$here/mkpersist.sh" /dev/disk/by-partlabel/persist
 
 echo ">> Done. Copy the shipped models into @models before first boot if you want Aura."

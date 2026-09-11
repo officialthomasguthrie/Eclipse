@@ -84,13 +84,14 @@ jobs:
         run: |
           img=$(ls result/*.raw | head -n1)
           table=$(sfdisk -J "$img")
+          # slot a's labels carry the version: store_0.1.0, store-verity_0.1.0
           size() {
-            jq -r --arg name "$1" '.partitiontable as $t | $t.partitions[] | select(.name == $name) | .size * ($t.sectorsize // 512)' <<<"$table"
+            jq -r --arg prefix "$1" '.partitiontable as $t | $t.partitions[] | select(.name | startswith($prefix)) | .size * ($t.sectorsize // 512)' <<<"$table"
           }
-          store=$(size store)
-          verity=$(size store-verity)
+          store=$(size store_)
+          verity=$(size store-verity_)
           if [ -z "$store" ]; then
-            echo "::error::The image has no partition named store."
+            echo "::error::The image has no store partition."
             sfdisk -l "$img"
             exit 1
           fi
