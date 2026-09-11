@@ -8,12 +8,14 @@ Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeou
 <eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds the persist
 partition to the image with the passphrase from the passfile (persist-image.sh, through sudo), then
 boots the image as an nvme drive. Everything goes through the serial console: the luks prompt, the
-autologin shell, a few commands, the default apps on the path, the host profile syzygy wrote. The
-serial output is printed as it arrives and kept in the log file.
+autologin shell, a few commands, the default apps on the path, the host profile syzygy wrote and
+what `eclipse host` and `eclipse doctor` print. The serial output is printed as it arrives and kept
+in the log file.
 
 With --models the files in that directory go into the @models subvolume before boot. The test waits
 on the system bus until aurad has loaded the model it picked for syzygy's tier, checks that it is the
-one in the directory, asks the local api for a short completion and asks aura a question over the bus.
+one in the directory, asks the local api for a short completion and asks aura a question over the bus
+and through `eclipse ai`.
 The local api has to refuse the same completion when the request comes with a web page's Origin or
 Host header, and the owner must not reach llama-server's socket behind it.
 
@@ -59,6 +61,13 @@ PASSPHRASE = r"(?i)passphrase[^\r\n]*:"
 COMMAND_START = r"\x1b\]133;C[^\x07\x1b]*(?:\x07|\x1b\\)"
 COMMAND_END = r"\x1b\]133;D;(\d+)(?:\x07|\x1b\\)"
 ESCAPES = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?>=]*[A-Za-z]|\x1b[=>]")
+
+
+def without_console(output):
+    """What a command printed, without the journal's lines that reach the serial console while it
+    runs and without blank lines at either end."""
+    lines = [line for line in output.splitlines() if not re.match(r"\s*\[\s*\d+\.\d+\] ", line)]
+    return "\n".join(lines).strip("\n")
 
 
 def first(paths):
@@ -546,6 +555,25 @@ def main():
         f"ai tier {ai_tier}, output {output.group(1)} scale {output.group(4)}, on the bus"
     )
 
+    # 3a. `eclipse host` reads the same properties off the bus and prints a row for each
+    host_rows = {
+        "Fingerprint": fingerprint,
+        "Class": klass,
+        "Display": f"{output.group(1)}, {output.group(2)}x{output.group(3)}, scale {output.group(4)}",
+        "GPU path": gpu_path,
+        "AI tier": ai_tier,
+    }
+    status, printed = run("eclipse host", "eclipse host")
+    printed = without_console(printed)
+    print(f"\nboot-test: eclipse host printed:\n{printed}", flush=True)
+    if status != 0:
+        fail(f"eclipse host exited with {status}")
+    rows = dict(re.findall(r"^(Fingerprint|Class|Display|GPU path|AI tier):[ \t]+(.*?)[ \t]*$", printed, re.M))
+    for label, value in host_rows.items():
+        if rows.get(label) != value:
+            fail(f"eclipse host says {label} {rows.get(label)!r}, the bus says {value!r}")
+    ok(f"eclipse host printed fingerprint {fingerprint[:12]} and ai tier {ai_tier}, as the bus did")
+
     # 4. aura. aurad reads the tier from syzygy, picks a model that is on the drive, runs
     # llama-server as its child and answers on the system bus. the name is there before the model
     # has loaded, so poll the State property
@@ -634,6 +662,39 @@ def main():
         if kind != "answer":
             fail(f"Ask on the bus said {kind} {answer!r} to {QUESTION!r}, expected an answer")
         ok(f"aura answered {QUESTION!r} on the bus with {answer!r}")
+
+        # 4a. the same question through `eclipse ai`, which prints the answer, and `eclipse ai`
+        # without one, which prints the properties the bus just gave
+        status, printed = run(f'eclipse ai "{QUESTION}"', "aura's answer through eclipse ai")
+        printed = without_console(printed)
+        print(f'\nboot-test: eclipse ai "{QUESTION}" printed:\n{printed}', flush=True)
+        if status != 0 or "paris" not in printed.lower():
+            fail(f"eclipse ai exited with {status} and did not say Paris")
+        ok(f"eclipse ai answered {printed!r}")
+
+        status, printed = run("eclipse ai", "aura's state through eclipse ai")
+        printed = without_console(printed)
+        print(f"\nboot-test: eclipse ai printed:\n{printed}", flush=True)
+        rows = dict(re.findall(r"^(State|Model|Tier):[ \t]+(.*?)[ \t]*$", printed, re.M))
+        wanted = {"State": "ready", "Model": aura_model, "Tier": aura_tier}
+        if status != 0 or rows != wanted:
+            fail(f"eclipse ai says {rows}, the bus says {wanted}")
+        ok("eclipse ai printed the state, model and tier the bus gave")
+
+    # 4b. `eclipse doctor`: no check fails, and syzygy and aura each have a row. with the model
+    # loaded, aura's row has to pass
+    status, printed = run("eclipse doctor", "eclipse doctor")
+    printed = without_console(printed)
+    print(f"\nboot-test: eclipse doctor printed:\n{printed}", flush=True)
+    rows = dict(re.findall(r"^(Syzygy|Aura|Persist|Memory|CPU|IO|System image)[ \t]+(Passed|Warning|Failed)[ \t]",
+                           printed, re.M))
+    if status != 0:
+        fail(f"eclipse doctor exited with {status}")
+    if rows.get("Syzygy") != "Passed":
+        fail(f"eclipse doctor says Syzygy {rows.get('Syzygy')}, expected Passed")
+    if "Aura" not in rows or (args.models and rows["Aura"] != "Passed"):
+        fail(f"eclipse doctor says Aura {rows.get('Aura')}, expected Passed")
+    ok("eclipse doctor: " + ", ".join(f"{name} {verdict}" for name, verdict in rows.items()))
 
     # 5. the desktop. greetd runs umbra on tty1 as the owner. umbra needs a moment to open the gpu
     # and paint its first frame, so the screendump is retried until it shows the background

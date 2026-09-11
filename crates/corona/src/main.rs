@@ -7,17 +7,18 @@
 //! confirmation the field asks for. `corona --type <words>`, `corona --enter [<words>]` and
 //! `corona --escape` type into the field of the panel that is already running.
 
-mod aura;
+mod answer;
 mod control;
 mod launcher;
 mod nu;
-mod os;
 mod route;
 #[cfg(target_os = "linux")]
 mod ui;
 
 use std::env;
 use std::process::ExitCode;
+
+use libeclipse::{aura, os};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();

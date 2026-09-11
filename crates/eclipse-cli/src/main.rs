@@ -1,4 +1,10 @@
-//! eclipse: the CLI. Talks to the same D-Bus services corona uses. Only the help text exists so far.
+//! eclipse: the CLI. `host`, `ai` and `doctor` ask the same D-Bus services Corona uses. The other
+//! commands are only a line in the help so far.
+
+mod ai;
+mod doctor;
+mod host;
+mod text;
 
 use std::process::ExitCode;
 
@@ -23,14 +29,14 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "host",
-        "Show or edit what Syzygy remembers about this machine",
+        "Show what Syzygy remembers about this machine",
         "Phase 1",
     ),
-    ("ai", "Talk to Aura from the terminal", "Phase 1"),
+    ("ai", "Ask Aura a question from the terminal", "Phase 1"),
     ("run", "Run a command inside a Penumbra sandbox", "Phase 2"),
     (
         "doctor",
-        "Diagnose the drive, the host, and the session",
+        "Check the drive, the host, and the services",
         "Phase 1",
     ),
     ("flash", "Write Eclipse onto a drive", "Phase 2"),
@@ -38,6 +44,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let rest = args.get(1..).unwrap_or_default();
     match args.first().map(String::as_str) {
         None | Some("--help" | "-h" | "help") => {
             usage();
@@ -47,6 +54,9 @@ fn main() -> ExitCode {
             println!("eclipse {}", libeclipse::VERSION);
             ExitCode::SUCCESS
         }
+        Some("host") => host::run(rest),
+        Some("ai") => ai::run(rest),
+        Some("doctor") => doctor::run(rest),
         Some(cmd) => {
             if let Some((name, what, phase)) = COMMANDS.iter().find(|(name, _, _)| *name == cmd) {
                 eprintln!("eclipse {name}: {what}. Not implemented yet ({phase}).");

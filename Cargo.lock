@@ -915,7 +915,6 @@ dependencies = [
  "iced",
  "iced_layershell",
  "libeclipse",
- "zbus",
 ]
 
 [[package]]
@@ -1188,6 +1187,7 @@ name = "eclipse-cli"
 version = "0.1.0"
 dependencies = [
  "libeclipse",
+ "rustix 1.1.4",
 ]
 
 [[package]]
@@ -2334,6 +2334,9 @@ dependencies = [
 [[package]]
 name = "libeclipse"
 version = "0.1.0"
+dependencies = [
+ "zbus",
+]
 
 [[package]]
 name = "libloading"

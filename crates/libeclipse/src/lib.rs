@@ -1,6 +1,13 @@
-//! Names, D-Bus addresses and paths shared by every Eclipse component.
+//! Names, D-Bus addresses and paths shared by every Eclipse component, the OS commands Corona and
+//! the eclipse command run, and the client side of the services on the system bus.
 //!
-//! Apache-2.0 so other people can embed it. Keep it dependency free.
+//! Apache-2.0 so other people can embed it. Keep it dependency free: only the `bus` feature,
+//! which the asking side of the bus turns on, brings in zbus.
+
+pub mod aura;
+pub mod bus;
+pub mod os;
+pub mod syzygy;
 
 /// Version of the Eclipse workspace this crate was built from.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

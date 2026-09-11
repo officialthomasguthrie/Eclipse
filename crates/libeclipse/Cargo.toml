@@ -8,5 +8,13 @@ repository.workspace = true
 authors.workspace = true
 license = "Apache-2.0"
 
+[features]
+# the client side of the services on the system bus, for corona and the eclipse command. off by
+# default, so eclipse-flash builds for macos and windows without it
+bus = ["dep:zbus"]
+
+[dependencies]
+zbus = { version = "5.18", default-features = false, features = ["async-io", "blocking-api"], optional = true }
+
 [lints]
 workspace = true

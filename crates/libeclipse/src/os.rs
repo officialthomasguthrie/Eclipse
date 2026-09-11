@@ -1,7 +1,8 @@
 //! The OS commands: `wifi`, `display`, `volume`, `power`. Each one is planned as a program
-//! with arguments and run as that program, never through a shell. The system tools do the
-//! work for now: nmcli, brightnessctl, wpctl, systemctl and umbra's own ipc. The D-Bus calls
-//! the decision record asks for come with the services that will answer them.
+//! with arguments and run as that program, never through a shell. Corona's field and the eclipse
+//! command both plan them here. The system tools do the work for now: nmcli, brightnessctl,
+//! wpctl, systemctl and umbra's own ipc. The D-Bus calls the decision record asks for come with
+//! the services that will answer them.
 
 use std::process::Command;
 
@@ -12,7 +13,7 @@ pub struct Action {
     pub program: &'static str,
     /// Its arguments.
     pub args: Vec<String>,
-    /// True when it changes something. The field asks before running those.
+    /// True when it changes something. Whoever runs it asks first.
     pub mutating: bool,
     /// What it does, as a short sentence without a full stop: "Turn wifi off".
     pub summary: String,
@@ -43,6 +44,7 @@ const POWER: &str = "power: off, reboot, suspend";
 
 /// Read the words of a line as an OS command. `None` when the first word is not one of the
 /// four, `Err` with the usage line when the arguments make no sense.
+#[must_use]
 pub fn parse(words: &[&str]) -> Option<Result<Action, &'static str>> {
     let (first, rest) = words.split_first()?;
     let parsed = match *first {

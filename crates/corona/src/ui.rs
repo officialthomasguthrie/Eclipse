@@ -10,12 +10,13 @@ use iced::{
 use iced_layershell::actions::{LayerShellCustomAction, LayerShellCustomActionWithId};
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings};
+use libeclipse::aura;
+use libeclipse::os::{self, Action};
 
-use crate::aura;
+use crate::answer;
 use crate::control::{self, Command};
 use crate::launcher::{self, App};
 use crate::nu;
-use crate::os::{self, Action};
 use crate::route::{self, Interpretation};
 
 /// Height of the field's row in logical pixels. The compositor keeps windows below it, and it
@@ -407,7 +408,7 @@ fn answered(state: &mut Corona, result: Result<(String, String), String>) -> Tas
     state.results = Results::None;
     match reply {
         aura::Reply::Answer(answer) => {
-            state.results = Results::Answer(aura::rows(&answer, ROWS));
+            state.results = Results::Answer(answer::rows(&answer, ROWS));
             Task::none()
         }
         aura::Reply::Action(action) => propose(state, action),
