@@ -3,7 +3,6 @@
 //! runs at once, one that changes something runs after a yes. Without a question it prints
 //! Aura's state.
 
-use std::io::{self, BufRead, IsTerminal, Write};
 use std::process::ExitCode;
 
 use libeclipse::aura::{self, Reply, Status};
@@ -83,7 +82,7 @@ fn rows(status: &Status) -> Vec<(&'static str, String)> {
 fn act(action: &Action, yes: bool) -> ExitCode {
     println!("{}: {}", action.summary, text::command_line(action));
     if action.mutating && !yes {
-        match confirm() {
+        match text::confirm("Run this command?") {
             Some(true) => {}
             Some(false) => {
                 eprintln!("Nothing was run.");
@@ -107,23 +106,6 @@ fn act(action: &Action, yes: bool) -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-/// Asks on the terminal. `None` when there is no terminal to ask on.
-fn confirm() -> Option<bool> {
-    let stdin = io::stdin();
-    if !stdin.is_terminal() {
-        return None;
-    }
-    print!("Run this command? [y/N] ");
-    io::stdout().flush().ok()?;
-    let mut line = String::new();
-    stdin.lock().read_line(&mut line).ok()?;
-    Some(agrees(&line))
-}
-
-fn agrees(line: &str) -> bool {
-    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
 #[cfg(test)]
@@ -164,15 +146,5 @@ mod tests {
                 ),
             ]
         );
-    }
-
-    #[test]
-    fn only_a_yes_runs_the_command() {
-        for line in ["y\n", "Y", " yes \n", "YES"] {
-            assert!(agrees(line), "{line:?}");
-        }
-        for line in ["", "\n", "n", "no", "sure", "yes please"] {
-            assert!(!agrees(line), "{line:?}");
-        }
     }
 }

@@ -2,6 +2,7 @@
 //! person would type them, sizes in binary units.
 
 use std::fmt::Write as _;
+use std::io::{self, BufRead, IsTerminal, Write as _};
 use std::process::ExitCode;
 
 use libeclipse::os::Action;
@@ -69,6 +70,24 @@ pub fn unknown(command: &str, arg: &str, usage: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
+/// Asks a question on the terminal with `[y/N]` after it. `None` when there is no terminal to
+/// ask on.
+pub fn confirm(question: &str) -> Option<bool> {
+    let stdin = io::stdin();
+    if !stdin.is_terminal() {
+        return None;
+    }
+    print!("{question} [y/N] ");
+    io::stdout().flush().ok()?;
+    let mut line = String::new();
+    stdin.lock().read_line(&mut line).ok()?;
+    Some(agrees(&line))
+}
+
+fn agrees(line: &str) -> bool {
+    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +140,16 @@ mod tests {
         assert_eq!(size((1 << 30) - 1), "1.0 GiB");
         assert_eq!(size(2_147_483_648), "2.0 GiB");
         assert_eq!(size(1_288_490_189), "1.2 GiB");
+    }
+
+    #[test]
+    fn only_a_yes_is_a_yes() {
+        for line in ["y\n", "Y", " yes \n", "YES"] {
+            assert!(agrees(line), "{line:?}");
+        }
+        for line in ["", "\n", "n", "no", "sure", "yes please"] {
+            assert!(!agrees(line), "{line:?}");
+        }
     }
 
     #[test]

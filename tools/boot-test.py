@@ -12,6 +12,13 @@ the autologin shell, a few commands, the default apps on the path, the a/b slots
 syzygy wrote and what `eclipse host` and `eclipse doctor` print. The serial output is printed as it
 arrives and kept in the log file.
 
+Timeline: the test takes a snapshot of home with `eclipse snapshot take`, changes one file and
+deletes another, finds the snapshot through `eclipse snapshot` and on the bus, and restores both from
+it. The deleted file comes back as the owner's; the changed one stays as it is without --replace and
+is the copy from the snapshot with it. The hourly timer's service runs once and adds a snapshot. Then
+`vault prune` with one hour, one day and two weeks drops the snapshots named by hand for January that
+fall past those limits and keeps the one that does not.
+
 The slots: systemd-boot started the uki with a boot counter in its name, the boot reached
 boot-complete.target and the counter is gone, systemd-sysupdate lists the running version as
 installed, /usr runs from slot a, and slot b's two partitions are there and empty.
@@ -1261,7 +1268,127 @@ def main():
                 look("the answer under the field", f"{stem}-corona-answer{extension}", args.answer_timeout,
                      rows=(1, LIST_ROWS))
 
-    # 6. the update. the second drive holds two newer versions' files. systemd-sysupdate checks them
+    # 6. timeline. vault answers on the bus and a timer takes a snapshot of home every hour. take one,
+    # change a file and delete another, find the snapshot through eclipse snapshot and on the bus,
+    # and restore both from it
+    _, output = run("systemctl is-active vault vault-timeline.timer", "the vault units")
+    states = re.findall(r"^(active|inactive|failed|activating)\s*$", without_console(output), re.M)
+    if states != ["active", "active"]:
+        fail(f"vault and its timer are {states or without_console(output).strip()!r}, expected both active")
+    _, output = run("systemctl show -p TimersCalendar --value vault-timeline.timer", "the timer's schedule")
+    if "OnCalendar=*-*-* *:00:00" not in without_console(output):
+        fail(f"vault-timeline.timer does not run every hour: {without_console(output).strip()!r}")
+
+    snapshots = "/persist/@snapshots/home"
+    notes, todo = "/home/eclipse/timeline/notes.txt", "/home/eclipse/timeline/todo.txt"
+
+    def snapshot_list(what):
+        """The names `eclipse snapshot` prints, oldest first."""
+        status, output = run("eclipse snapshot", f"eclipse snapshot {what}")
+        printed = without_console(output)
+        print(f"\nboot-test: eclipse snapshot {what} printed:\n{printed}", flush=True)
+        if status != 0:
+            fail(f"eclipse snapshot exited with {status} {what}")
+        return re.findall(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)\s*$", printed, re.M)
+
+    def contents(path):
+        status, output = run(f"cat {path}", f"what is in {path}")
+        return without_console(output) if status == 0 else f"nothing, cat exited with {status}"
+
+    def restore(options, what):
+        status, output = run(f"eclipse snapshot restore {options}", what)
+        printed = without_console(output)
+        print(f"\nboot-test: eclipse snapshot restore {options} printed:\n{printed}", flush=True)
+        return status, printed
+
+    status, output = run(f"mkdir -p (dirname {notes}); and printf 'First draft\\n' > {notes}; "
+                         f"and printf 'Buy milk\\n' > {todo}", "the files for the snapshot")
+    if status != 0:
+        fail(f"the files for the snapshot could not be written: {without_console(output).strip()!r}")
+    status, output = run("eclipse snapshot take", "eclipse snapshot take")
+    taken = re.search(r"^Took snapshot (\S+Z)\.\s*$", without_console(output), re.M)
+    if status != 0 or not taken:
+        fail(f"eclipse snapshot take exited with {status}: {without_console(output).strip()!r}")
+    snapshot = taken.group(1)
+    _, output = run(f"sudo btrfs property get -ts {snapshots}/{snapshot} ro", "whether the snapshot is read only")
+    if "ro=true" not in output:
+        fail(f"{snapshots}/{snapshot} is not a read-only snapshot: {without_console(output).strip()!r}")
+    ok(f"took snapshot {snapshot}, read only under {snapshots}")
+
+    status, _ = run(f"printf 'Second draft\\n' > {notes}; and rm {todo}", "changing one file and deleting the other")
+    if status != 0:
+        fail("the files could not be changed")
+    names = snapshot_list("after the changes")
+    if snapshot not in names:
+        fail(f"eclipse snapshot lists {names}, without {snapshot}")
+    _, output = run("busctl --system --json=short call dev.eclipse.Vault /dev/eclipse/Vault dev.eclipse.Vault List",
+                    "the snapshots on the bus")
+    found = re.search(r'\{"type":"as","data":\[(\[[^\]]*\])\]\}', output)
+    on_bus = json.loads(found.group(1)) if found else without_console(output).strip()
+    if on_bus != names:
+        fail(f"the bus lists {on_bus!r}, eclipse snapshot lists {names}")
+    # the snapshot keeps home's permissions, so the owner reads their own files in it
+    if "Buy milk" not in contents(f"{snapshots}/{snapshot}/eclipse/timeline/todo.txt"):
+        fail("the owner cannot read the deleted file in the snapshot")
+    ok(f"eclipse snapshot and the bus list {len(names)} snapshots with {snapshot}")
+
+    status, printed = restore(f"{snapshot} {todo}", "restoring the deleted file")
+    if status != 0 or f"Restored {todo} from {snapshot}." not in printed:
+        fail(f"restoring the deleted file exited with {status}")
+    if "Buy milk" not in contents(todo):
+        fail(f"{todo} did not come back as it was")
+    _, output = run(f"stat -c owner=%U:%a {todo}", "the owner of the restored file")
+    if "owner=eclipse:644" not in output:
+        fail(f"the restored file is not the owner's own: {without_console(output).strip()!r}")
+    # without a terminal to ask on, a file that changed stays as it is
+    status, printed = restore(f"{snapshot} {notes} </dev/null", "restoring the changed file without --replace")
+    if status != 1 or f"{notes} has changed since this snapshot." not in printed or "--replace" not in printed:
+        fail(f"restoring the changed file without --replace exited with {status}, expected 1 and a sentence")
+    if "Second draft" not in contents(notes):
+        fail(f"{notes} was overwritten without --replace")
+    status, printed = restore(f"--replace {snapshot} {notes}", "restoring the changed file with --replace")
+    if status != 0 or f"Replaced {notes} with the copy from {snapshot}." not in printed:
+        fail(f"restoring the changed file with --replace exited with {status}")
+    if "First draft" not in contents(notes):
+        fail(f"{notes} is not the copy from the snapshot after --replace")
+    status, printed = restore(f"{snapshot} {notes}", "restoring a file that is the same")
+    if status != 0 or "Nothing was restored." not in printed:
+        fail(f"restoring a file that is the same as in the snapshot exited with {status}")
+    ok(f"restored {todo}, and {notes} only with --replace")
+
+    # 6a. the schedule and the rules. the timer's service takes a snapshot the way the hour does. then
+    # snapshots named by hand for January: 2026-01-05 and 2026-01-12 are Mondays. keeping one hour, one
+    # day and two weeks keeps this week's first and the first of the week of the 12th, and drops the
+    # rest of January
+    status, output = run("sudo systemctl start vault-timeline.service", "the timer's snapshot")
+    if status != 0:
+        _, log = run("journalctl -u vault-timeline --no-pager -n 20", "the timer's log")
+        fail(f"vault-timeline.service failed: {without_console(log).strip()[-800:]!r}")
+    timed = [name for name in snapshot_list("after the timer's snapshot") if name not in names]
+    if len(timed) != 1 or timed[0] <= snapshot:
+        fail(f"vault-timeline.service added {timed}, expected one snapshot after {snapshot}")
+    ok(f"vault-timeline.service took {timed[0]}")
+
+    by_hand = ["2026-01-05T09:00:00Z", "2026-01-12T09:00:00Z", "2026-01-13T09:00:00Z", "2026-01-13T10:00:00Z"]
+    status, output = run("; and ".join(f"sudo btrfs subvolume snapshot -r /persist/@home {snapshots}/{name}"
+                                       for name in by_hand), "snapshots named by hand")
+    before = snapshot_list("with the snapshots named by hand")
+    if status != 0 or not set(by_hand) <= set(before):
+        fail(f"the snapshots named by hand are not all there: {before}")
+    status, output = run("sudo vault prune --hourly 1 --daily 1 --weekly 2", "the retention rules")
+    printed = without_console(output)
+    print(f"\nboot-test: vault prune printed:\n{printed}", flush=True)
+    dropped = re.findall(r"^Dropped snapshot (\S+Z)\.\s*$", printed, re.M)
+    past = {"2026-01-05T09:00:00Z", "2026-01-13T09:00:00Z", "2026-01-13T10:00:00Z"}
+    if status != 0 or not past <= set(dropped) or "2026-01-12T09:00:00Z" in dropped or before[-1] in dropped:
+        fail(f"vault prune exited with {status} and dropped {dropped}, expected {sorted(past)} and not "
+             f"2026-01-12T09:00:00Z or the newest")
+    left = snapshot_list("after the retention rules")
+    if left != sorted(set(before) - set(dropped)):
+        fail(f"eclipse snapshot lists {left} after the rules dropped {dropped} out of {before}")
+    ok(f"the retention rules dropped {len(dropped)} of {len(before)} snapshots and kept {', '.join(left)}")
+
+    # 7. the update. the second drive holds two newer versions' files. systemd-sysupdate checks them
     # against SHA256SUMS, writes the store and its verity partition into the free slot under the
     # uuids in their names and puts the uki on the esp with three tries. then the vm reboots into it
     if args.updates:
@@ -1353,7 +1480,7 @@ def main():
             fail(f"the vm came back running {after}, expected {new}")
         ok(f"rebooted into {new} from slot b, {running} stays in slot a")
 
-        # 6a. the rollback. broken's boot check always fails. sysupdate writes it over running, the
+        # 7a. the rollback. broken's boot check always fails. sysupdate writes it over running, the
         # oldest version, in slot a. none of its boots is marked good, so each start takes a try off
         # its uki, and once it has none left systemd-boot starts new from slot b again
         broken = install("broken", new, "a")
@@ -1368,7 +1495,7 @@ def main():
             fail(f"the vm came back running {after} after {TRIES} failed boots, expected {new}")
         ok(f"{broken} failed {TRIES} boots and {new} started again from slot b, sysupdate still lists {broken}")
 
-    # 7. down
+    # 8. down
     child.send("sudo systemctl poweroff\r")
     try:
         child.expect(pexpect.EOF, timeout=90)

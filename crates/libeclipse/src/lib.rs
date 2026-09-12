@@ -8,6 +8,7 @@ pub mod aura;
 pub mod bus;
 pub mod os;
 pub mod syzygy;
+pub mod vault;
 
 /// Version of the Eclipse workspace this crate was built from.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

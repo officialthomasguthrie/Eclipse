@@ -1,9 +1,10 @@
-//! eclipse: the CLI. `host`, `ai` and `doctor` ask the same D-Bus services Corona uses. The other
-//! commands are only a line in the help so far.
+//! eclipse: the CLI. `host`, `ai`, `doctor` and `snapshot` ask the same D-Bus services Corona
+//! uses. The other commands are only a line in the help so far.
 
 mod ai;
 mod doctor;
 mod host;
+mod snapshot;
 mod text;
 
 use std::process::ExitCode;
@@ -16,7 +17,11 @@ const COMMANDS: &[(&str, &str, &str)] = &[
         "Phase 2",
     ),
     ("rollback", "Boot the previous system slot", "Phase 2"),
-    ("snapshot", "Take or list Timeline snapshots", "Phase 2"),
+    (
+        "snapshot",
+        "List, take and restore from Timeline snapshots",
+        "Phase 2",
+    ),
     (
         "backup",
         "Run an encrypted backup to a Vault target",
@@ -57,6 +62,7 @@ fn main() -> ExitCode {
         Some("host") => host::run(rest),
         Some("ai") => ai::run(rest),
         Some("doctor") => doctor::run(rest),
+        Some("snapshot") => snapshot::run(rest),
         Some(cmd) => {
             if let Some((name, what, phase)) = COMMANDS.iter().find(|(name, _, _)| *name == cmd) {
                 eprintln!("eclipse {name}: {what}. Not implemented yet ({phase}).");
