@@ -261,7 +261,9 @@ jobs:
             echo "::endgroup::"
           done
       - name: Drop the image from the cache
-        if: always()
+        # only after a pass. a failed boot job keeps it, so `gh run rerun --failed` does not have to
+        # build the image again. when the quota is full, github drops the oldest entries
+        if: success()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}

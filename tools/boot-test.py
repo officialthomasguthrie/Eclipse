@@ -1203,12 +1203,13 @@ def main():
         if not found or found.group(1) != "0":
             fail(f"systemd-sysupdate update exited with {found.group(1) if found else 'no status'}")
 
+        # sysupdate's current is the newest version installed, not the one running
         _, output = run("sudo systemd-sysupdate --offline --json=short list", "systemd-sysupdate list after the update")
         found = re.search(r'^\{"current.*\}\s*$', without_console(output), re.M)
         listing = json.loads(found.group(0)) if found else {}
-        if listing.get("current") != running or sorted(listing.get("all", [])) != sorted([running, new]):
+        if listing.get("current") != new or sorted(listing.get("all", [])) != sorted([running, new]):
             fail(f"systemd-sysupdate lists {without_console(output).strip()[-600:]!r} after the update, expected "
-                 f"{running} current and {new} installed next to it")
+                 f"{new} current and {running} installed next to it")
 
         # three tries left and none done. systemd-boot takes one off each time it starts the file
         _, output = run("sudo ls -1 /boot/EFI/Linux", "the ukis on the esp after the update")
