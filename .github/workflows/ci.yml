@@ -226,9 +226,13 @@ jobs:
           truncate -s "$(($(du -sm updates | cut -f1) + 512))M" updates.img
           mkfs.ext4 -q -F -L updates -d updates updates.img
           rm -r updates
+          # an empty disk for the backup step. vault finds it by the uuid mkfs gives it
+          truncate -s 256M backup.img
+          mkfs.ext4 -q -F -L backup backup.img
           printf 'eclipse-test' > pass.txt
           python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw pass.txt --models models/cache \
-            --log serial.log --splash splash.png --desktop desktop.png --corona --updates updates.img --timeout 1200
+            --log serial.log --splash splash.png --desktop desktop.png --corona --updates updates.img \
+            --backup backup.img --timeout 1200
       - uses: actions/upload-artifact@v4
         if: always()
         continue-on-error: true

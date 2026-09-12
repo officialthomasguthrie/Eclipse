@@ -1,9 +1,10 @@
-//! Restoring one file from a snapshot.
+//! Restoring one file from a snapshot or a backup.
 //!
-//! Vault runs as root, but nothing here reads or writes as root. [`restore`] checks the request
-//! and runs `vault restore-file` as the account that asked, and that child does [`copy_back`]. So a
-//! restore reads only what the caller could read in the snapshot and writes only where the caller
-//! can write, whatever links the snapshot or home hold.
+//! Vault runs as root, but nothing here reads or writes home as root. [`restore`] checks the
+//! request and [`copy_as`] runs `vault restore-file` as the account that asked, and that child does
+//! [`copy_back`]. So a restore reads only what the caller could read in the snapshot and writes
+//! only where the caller can write, whatever links the snapshot or home hold. A restore from a
+//! backup puts the file and its folders somewhere first and copies from there the same way.
 
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, BufRead, BufReader};
@@ -83,6 +84,22 @@ impl Problem {
     }
 }
 
+/// What the copy comes from, for its sentences.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    Snapshot,
+    Backup,
+}
+
+impl Source {
+    pub fn word(self) -> &'static str {
+        match self {
+            Source::Snapshot => "snapshot",
+            Source::Backup => "backup",
+        }
+    }
+}
+
 /// The account that asked, as the child runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Account {
@@ -114,6 +131,18 @@ pub fn under_home(home: &Path, path: &Path) -> Option<PathBuf> {
     plain.then(|| rest.to_path_buf())
 }
 
+/// The part of `path` under `home` and the path itself, or why a file there cannot be restored.
+pub fn inside(home: &Path, path: &str) -> Result<(PathBuf, PathBuf), Problem> {
+    let target = PathBuf::from(path);
+    match under_home(home, &target) {
+        Some(rest) => Ok((rest, target)),
+        None => Err(Problem::Invalid(format!(
+            "Only files in {} can be restored. Give the full path, without . or .. in it.",
+            home.display()
+        ))),
+    }
+}
+
 /// Restores `path`, a file under `home`, from the snapshot named `snapshot` in `snapshots`, as
 /// `account`.
 pub fn restore(
@@ -135,66 +164,83 @@ pub fn restore(
             "There is no snapshot {snapshot}."
         )));
     }
-    let target = PathBuf::from(path);
-    let Some(rest) = under_home(home, &target) else {
-        return Err(Problem::Invalid(format!(
-            "Only files in {} can be restored. Give the full path, without . or .. in it.",
-            home.display()
-        )));
-    };
-    let source = root.join(rest);
+    let (rest, target) = inside(home, path)?;
+    copy_as(
+        account,
+        &root.join(rest),
+        &target,
+        replace,
+        Source::Snapshot,
+    )
+    .map(|outcome| (outcome, target))
+}
 
+/// Runs `vault restore-file` as `account` to copy `source` to `target`.
+pub fn copy_as(
+    account: Account,
+    source: &Path,
+    target: &Path,
+    replace: bool,
+    from: Source,
+) -> Result<Outcome, Problem> {
     let program = std::env::current_exe()
         .map_err(|e| Problem::Failed(format!("Vault could not find its own program: {e}")))?;
     let mut child = Command::new(program);
     child
         .arg("restore-file")
-        .arg(&source)
-        .arg(&target)
+        .arg(source)
+        .arg(target)
         .uid(account.uid)
         .gid(account.gid);
     if replace {
         child.arg("--replace");
+    }
+    if from == Source::Backup {
+        child.arg("--from-backup");
     }
     let output = child
         .output()
         .map_err(|e| Problem::Failed(format!("Vault could not start the copy: {e}")))?;
     let said = String::from_utf8_lossy(&output.stdout);
     if output.status.success() {
-        let outcome = Outcome::from_name(said.trim()).ok_or_else(|| {
+        Outcome::from_name(said.trim()).ok_or_else(|| {
             Problem::Failed(format!("The copy ended without saying what it did: {said}"))
-        })?;
-        Ok((outcome, target))
+        })
     } else {
         let sentence = String::from_utf8_lossy(&output.stderr).trim().to_string();
         Err(Problem::from_code(output.status.code(), sentence))
     }
 }
 
-/// Copies the file `from`, in a snapshot, to `to`, in home. A file at `to` with other bytes is
-/// only overwritten with `replace`. This runs as the account that asked for the restore.
-pub fn copy_back(from: &Path, to: &Path, replace: bool) -> Result<Outcome, Problem> {
+/// Copies the file `from`, in a snapshot or a restored backup, to `to`, in home. A file at `to`
+/// with other bytes is only overwritten with `replace`. This runs as the account that asked for
+/// the restore.
+pub fn copy_back(
+    from: &Path,
+    to: &Path,
+    replace: bool,
+    source: Source,
+) -> Result<Outcome, Problem> {
     let shown = to.display();
-    let source = match fs::symlink_metadata(from) {
+    let word = source.word();
+    let metadata = match fs::symlink_metadata(from) {
         Ok(meta) if meta.is_file() => meta,
         Ok(meta) if meta.is_dir() => {
             return Err(Problem::Invalid(format!(
-                "{shown} is a folder in this snapshot. Only single files can be restored."
+                "{shown} is a folder in this {word}. Only single files can be restored."
             )));
         }
         Ok(_) => {
             return Err(Problem::Invalid(format!(
-                "{shown} is not a regular file in this snapshot."
+                "{shown} is not a regular file in this {word}."
             )));
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            return Err(Problem::Missing(format!(
-                "{shown} is not in this snapshot."
-            )));
+            return Err(Problem::Missing(format!("{shown} is not in this {word}.")));
         }
         Err(e) => {
             return Err(Problem::Failed(format!(
-                "Could not read {shown} in this snapshot: {e}"
+                "Could not read {shown} in this {word}: {e}"
             )));
         }
     };
@@ -206,16 +252,16 @@ pub fn copy_back(from: &Path, to: &Path, replace: bool) -> Result<Outcome, Probl
         Ok(meta) => {
             let same = meta.is_file()
                 && same_bytes(from, to).map_err(|e| {
-                    Problem::Failed(format!("Could not compare {shown} with the snapshot: {e}"))
+                    Problem::Failed(format!("Could not compare {shown} with the {word}: {e}"))
                 })?;
             if same {
                 Ok(Outcome::Unchanged)
             } else if replace {
-                write(from, to, &source)?;
+                write(from, to, &metadata)?;
                 Ok(Outcome::Replaced)
             } else {
                 Err(Problem::Changed(format!(
-                    "{shown} has changed since this snapshot."
+                    "{shown} has changed since this {word}."
                 )))
             }
         }
@@ -225,7 +271,7 @@ pub fn copy_back(from: &Path, to: &Path, replace: bool) -> Result<Outcome, Probl
                     Problem::Failed(format!("Could not make the folder for {shown}: {e}"))
                 })?;
             }
-            write(from, to, &source)?;
+            write(from, to, &metadata)?;
             Ok(Outcome::Restored)
         }
         Err(e) => Err(Problem::Failed(format!("Could not look at {shown}: {e}"))),
@@ -283,6 +329,8 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::time::{Duration, SystemTime};
 
+    const SNAPSHOT: Source = Source::Snapshot;
+
     /// A fresh directory under the system's temporary directory, gone again when dropped.
     struct Scratch(PathBuf);
 
@@ -330,7 +378,18 @@ mod tests {
             "/home/../etc/shadow",
         ] {
             assert_eq!(under_home(home, Path::new(path)), None, "{path}");
+            assert!(
+                matches!(inside(home, path), Err(Problem::Invalid(_))),
+                "{path}"
+            );
         }
+        assert_eq!(
+            inside(home, "/home/eclipse/notes.txt"),
+            Ok((
+                PathBuf::from("eclipse/notes.txt"),
+                PathBuf::from("/home/eclipse/notes.txt")
+            ))
+        );
     }
 
     #[test]
@@ -349,7 +408,10 @@ mod tests {
             .set_modified(then)
             .unwrap();
 
-        assert_eq!(copy_back(&from, &to, false), Ok(Outcome::Restored));
+        assert_eq!(
+            copy_back(&from, &to, false, SNAPSHOT),
+            Ok(Outcome::Restored)
+        );
         assert_eq!(fs::read_to_string(&to).unwrap(), "Buy milk\n");
         let meta = fs::metadata(&to).unwrap();
         assert_eq!(meta.permissions().mode() & 0o777, 0o640);
@@ -366,16 +428,24 @@ mod tests {
         fs::write(&from, "First draft\n").unwrap();
         fs::write(&to, "Second draft\n").unwrap();
 
-        let refused = copy_back(&from, &to, false);
+        let refused = copy_back(&from, &to, false, SNAPSHOT);
         assert!(
             matches!(&refused, Err(Problem::Changed(why)) if why.ends_with("has changed since this snapshot.")),
             "{refused:?}"
         );
         assert_eq!(fs::read_to_string(&to).unwrap(), "Second draft\n");
+        let refused = copy_back(&from, &to, false, Source::Backup);
+        assert!(
+            matches!(&refused, Err(Problem::Changed(why)) if why.ends_with("has changed since this backup.")),
+            "{refused:?}"
+        );
 
-        assert_eq!(copy_back(&from, &to, true), Ok(Outcome::Replaced));
+        assert_eq!(copy_back(&from, &to, true, SNAPSHOT), Ok(Outcome::Replaced));
         assert_eq!(fs::read_to_string(&to).unwrap(), "First draft\n");
-        assert_eq!(copy_back(&from, &to, false), Ok(Outcome::Unchanged));
+        assert_eq!(
+            copy_back(&from, &to, false, SNAPSHOT),
+            Ok(Outcome::Unchanged)
+        );
     }
 
     #[test]
@@ -386,7 +456,7 @@ mod tests {
         fs::write(&from, "abc").unwrap();
         fs::write(&to, "abd").unwrap();
         assert!(matches!(
-            copy_back(&from, &to, false),
+            copy_back(&from, &to, false, SNAPSHOT),
             Err(Problem::Changed(_))
         ));
     }
@@ -401,23 +471,26 @@ mod tests {
         let to = scratch.0.join("out");
 
         assert!(matches!(
-            copy_back(&folder, &to, false),
+            copy_back(&folder, &to, false, SNAPSHOT),
             Err(Problem::Invalid(_))
         ));
         assert!(matches!(
-            copy_back(&link, &to, true),
+            copy_back(&link, &to, true, SNAPSHOT),
             Err(Problem::Invalid(_))
         ));
-        assert!(matches!(
-            copy_back(&scratch.0.join("gone"), &to, false),
-            Err(Problem::Missing(_))
-        ));
+        assert_eq!(
+            copy_back(&scratch.0.join("gone"), &to, false, Source::Backup),
+            Err(Problem::Missing(format!(
+                "{} is not in this backup.",
+                to.display()
+            )))
+        );
         assert!(!to.exists());
 
         let file = scratch.0.join("file");
         fs::write(&file, "x").unwrap();
         assert!(matches!(
-            copy_back(&file, &folder, true),
+            copy_back(&file, &folder, true, SNAPSHOT),
             Err(Problem::Failed(_))
         ));
     }

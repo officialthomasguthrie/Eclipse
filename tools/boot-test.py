@@ -3,7 +3,7 @@
 runs this.
 
 Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeout 600] [--log serial.log]
-       [--splash splash.png] [--desktop desktop.png] [--corona] [--updates updates.img]
+       [--splash splash.png] [--desktop desktop.png] [--corona] [--updates updates.img] [--backup backup.img]
 
 <eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds slot b and the
 persist partition to the image with the passphrase from the passfile (persist-image.sh, through sudo),
@@ -18,6 +18,13 @@ it. The deleted file comes back as the owner's; the changed one stays as it is w
 is the copy from the snapshot with it. The hourly timer's service runs once and adds a snapshot. Then
 `vault prune` with one hour, one day and two weeks drops the snapshots named by hand for January that
 fall past those limits and keeps the one that does not.
+
+Backup: with --backup the vm gets another drive, an empty ext4 file system labelled backup. The test
+mounts it, chooses a folder on it with `sudo vault target`, which prints the password, and unmounts it
+again. `eclipse backup now` backs up home; vault mounts the disk by its uuid by itself. One file is
+changed and another deleted, and both come back from the backup through `eclipse backup restore` the
+way they do from a snapshot. Then the test mounts the disk again: rustic refuses the repository with a
+wrong password and opens it with the printed one, and grep finds the file's text in none of its files.
 
 The slots: systemd-boot started the uki with a boot counter in its name, the boot reached
 boot-complete.target and the counter is gone, systemd-sysupdate lists the running version as
@@ -512,6 +519,7 @@ def main():
     ap.add_argument("--corona", action="store_true", help="expect corona's panel on the desktop")
     ap.add_argument("--updates", help="an ext4 image labelled updates with a newer version's update files, "
                     "install them and reboot into that version")
+    ap.add_argument("--backup", help="an empty ext4 image labelled backup, back up home onto it and restore from it")
     args = ap.parse_args()
     with open(args.passfile, encoding="utf-8") as f:
         passphrase = f.read()
@@ -542,6 +550,10 @@ def main():
         # a second nvme drive. nothing on the system mounts it, the test does
         cmd += ["-drive", f"if=none,id=updates,format=raw,file={os.path.abspath(args.updates)}",
                 "-device", "nvme,drive=updates,serial=updates"]
+    if args.backup:
+        # and one for backups. vault mounts it by the uuid of its file system
+        cmd += ["-drive", f"if=none,id=backup,format=raw,file={os.path.abspath(args.backup)}",
+                "-device", "nvme,drive=backup,serial=backup"]
     print("boot-test: " + " ".join(cmd), flush=True)
 
     start = time.monotonic()
@@ -1387,6 +1399,111 @@ def main():
     if left != sorted(set(before) - set(dropped)):
         fail(f"eclipse snapshot lists {left} after the rules dropped {dropped} out of {before}")
     ok(f"the retention rules dropped {len(dropped)} of {len(before)} snapshots and kept {', '.join(left)}")
+
+    # 6b. backup. the drive labelled backup is an empty ext4 disk. the test mounts it the way a desktop
+    # would, chooses a folder on it and unmounts it: from then on vault finds the disk by uuid and
+    # mounts it itself. back up home, change a file and delete another, restore both from the backup,
+    # then look at the repository on the disk
+    if args.backup:
+        disk = "/run/backup-disk"
+        folder = f"{disk}/Eclipse"
+        letter, plan = "/home/eclipse/backup/letter.txt", "/home/eclipse/backup/plan.txt"
+        words = "Kept in the backup 4127"
+
+        def backup_cli(options, what):
+            status, output = run(f"eclipse backup {options}", what)
+            printed = without_console(output)
+            print(f"\nboot-test: eclipse backup {options} printed:\n{printed}", flush=True)
+            return status, printed
+
+        def with_disk(what):
+            status, output = run(f"sudo mkdir -p {disk}; and sudo mount /dev/disk/by-label/backup {disk}", what)
+            if status != 0:
+                fail(f"the backup disk could not be mounted for {what}: {without_console(output).strip()!r}")
+
+        status, output = run(f"mkdir -p (dirname {letter}); and printf '{words}\\n' > {letter}; "
+                             f"and printf 'Plan A\\n' > {plan}", "the files for the backup")
+        if status != 0:
+            fail(f"the files for the backup could not be written: {without_console(output).strip()!r}")
+        with_disk("choosing the backup folder")
+        status, output = run(f"sudo vault target {folder}", "sudo vault target")
+        printed = without_console(output)
+        print(f"\nboot-test: vault target printed:\n{printed}", flush=True)
+        found = re.search(r"The password of these backups is ([0-9a-z]{5}(?:-[0-9a-z]{5}){4})\.", printed)
+        if status != 0 or f"Backups of home go to {folder} now." not in printed or not found:
+            fail(f"sudo vault target exited with {status} without the folder and a password")
+        password = found.group(1)
+        _, output = run("sudo stat -c key=%a:%U /var/lib/eclipse/vault/backup.key", "who can read the password")
+        if "key=600:root" not in output:
+            fail(f"the backup password is not only root's: {without_console(output).strip()!r}")
+        status, _ = run(f"sudo umount {disk}", "unmounting the backup disk")
+        if status != 0:
+            fail("the backup disk could not be unmounted")
+        ok(f"backups go to {folder}, with a password only root reads")
+
+        status, printed = backup_cli("now", "backing up home")
+        made = re.search(r"^Backed up home as ([0-9a-f]{8}) at (\S+Z)\.\s*$", printed, re.M)
+        if status != 0 or not made:
+            _, log = run("journalctl -u vault --no-pager -n 20", "vault's log")
+            fail(f"eclipse backup now exited with {status}: {without_console(log).strip()[-800:]!r}")
+        backup = made.group(1)
+        _, output = run("echo left=(count (sudo ls -A /persist/@snapshots/backup))", "the snapshot the backup read")
+        if "left=0" not in output:
+            fail(f"the snapshot the backup read is still there: {without_console(output).strip()!r}")
+        status, printed = backup_cli("list", "the backups")
+        if status != 0 or not re.search(rf"^{backup}  {made.group(2)}\s*$", printed, re.M):
+            fail(f"eclipse backup list exited with {status} without {backup} at {made.group(2)}")
+        _, output = run("busctl --system --json=short call dev.eclipse.Vault /dev/eclipse/Vault dev.eclipse.Vault Backups",
+                        "the backups on the bus")
+        if f'"{backup}' not in output:
+            fail(f"the bus does not list backup {backup}: {without_console(output).strip()!r}")
+        ok(f"backed up home as {backup} at {made.group(2)}, and the snapshot it read is gone")
+
+        status, _ = run(f"printf 'Plan B\\n' > {plan}; and rm {letter}", "changing one file and deleting the other")
+        if status != 0:
+            fail("the files could not be changed")
+        status, printed = backup_cli(f"restore {backup} {letter}", "restoring the deleted file from the backup")
+        if status != 0 or f"Restored {letter} from backup {backup}." not in printed:
+            fail(f"restoring the deleted file from the backup exited with {status}")
+        if words not in contents(letter):
+            fail(f"{letter} did not come back from the backup as it was")
+        _, output = run(f"stat -c owner=%U:%a {letter}", "the owner of the file from the backup")
+        if "owner=eclipse:644" not in output:
+            fail(f"the file from the backup is not the owner's own: {without_console(output).strip()!r}")
+        status, printed = backup_cli(f"restore {backup} {plan} </dev/null", "restoring the changed file without --replace")
+        if status != 1 or f"{plan} has changed since this backup." not in printed or "--replace" not in printed:
+            fail(f"restoring the changed file from the backup without --replace exited with {status}, expected 1")
+        if "Plan B" not in contents(plan):
+            fail(f"{plan} was overwritten from the backup without --replace")
+        status, printed = backup_cli(f"restore --replace {backup} {plan}", "restoring the changed file with --replace")
+        if status != 0 or f"Replaced {plan} with the copy from backup {backup}." not in printed:
+            fail(f"restoring the changed file from the backup with --replace exited with {status}")
+        if "Plan A" not in contents(plan):
+            fail(f"{plan} is not the copy from the backup after --replace")
+        ok(f"restored {letter} from backup {backup}, and {plan} only with --replace")
+
+        # the repository is rustic's, encrypted: a wrong password opens nothing, the printed one opens
+        # it, and the text of the file is in none of its files
+        with_disk("looking at the repository")
+        _, output = run(f"sudo ls {folder}", "the repository's files")
+        if not all(part in output for part in ("config", "data", "index", "keys", "snapshots")):
+            fail(f"{folder} does not hold a rustic repository: {without_console(output).strip()!r}")
+        status, output = run(f"sudo rustic -r {folder} --password not-the-password --no-cache --no-progress snapshots",
+                             "the repository with a wrong password")
+        if status == 0 or "incorrect" not in without_console(output):
+            fail(f"rustic opened the repository with a wrong password, status {status}")
+        status, output = run(f"sudo rustic -r {folder} --password {password} --no-cache --no-progress snapshots --json",
+                             "the repository with the printed password")
+        if status != 0 or f'"id": "{backup}' not in output:
+            fail(f"the printed password does not open the repository, status {status}")
+        status, output = run(f"sudo grep -r -l -F '{words}' {folder}", "the file's text in the repository")
+        if status != 1:
+            fail(f"grep exited with {status} looking for the file's text in the repository: {without_console(output).strip()!r}")
+        status, _ = run(f"sudo umount {disk}", "unmounting the backup disk again")
+        if status != 0:
+            fail("the backup disk could not be unmounted again")
+        ok("rustic refuses the repository with a wrong password and opens it with the printed one, "
+           "and the file's text is in none of its files")
 
     # 7. the update. the second drive holds two newer versions' files. systemd-sysupdate checks them
     # against SHA256SUMS, writes the store and its verity partition into the free slot under the

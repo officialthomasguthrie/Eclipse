@@ -1,6 +1,6 @@
 # vault: timeline snapshots of home, rustic backups, drive cloning. vault serve answers on the
-# system bus as dev.eclipse.Vault and a timer takes a snapshot every hour. backups and cloning come
-# later
+# system bus as dev.eclipse.Vault and a timer takes a snapshot every hour. backups go to a folder on
+# another disk that sudo vault target chooses. cloning comes later
 {
   config,
   lib,
@@ -87,19 +87,32 @@ in
         "/persist"
         "/home"
       ];
-      path = [ pkgs.btrfs-progs ];
+      path = [
+        pkgs.btrfs-progs
+        pkgs.rustic
+        pkgs.util-linux
+      ];
       serviceConfig = {
         Type = "dbus";
         BusName = busName;
         ExecStart = "${cfg.package}/bin/vault serve --home /home ${timeline}";
         Restart = "on-failure";
-        # root, because taking and deleting a snapshot needs it. a restore reads and writes in a
-        # child that runs as the account that asked
+        # root, because taking and deleting a snapshot needs it, and so do mounting the backup disk
+        # and reading all of home for a backup. a restore reads and writes home in a child that
+        # runs as the account that asked
         ProtectSystem = "strict";
         ReadWritePaths = [
           "/persist"
           "/home"
         ];
+        # the backup target and its password, only root reads them
+        StateDirectory = "eclipse/vault";
+        StateDirectoryMode = "0700";
+        # a restore from a backup lands here before the copy into home
+        CacheDirectory = "vault";
+        # the backup disk is mounted under here, in this service's own mount namespace, and goes
+        # away with it
+        RuntimeDirectory = "vault";
         PrivateTmp = true;
         # the bus is a unix socket, so it is still there without a network
         PrivateNetwork = true;

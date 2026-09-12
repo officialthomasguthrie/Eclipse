@@ -1,9 +1,11 @@
-//! eclipse: the CLI. `host`, `ai`, `doctor` and `snapshot` ask the same D-Bus services Corona
-//! uses. The other commands are only a line in the help so far.
+//! eclipse: the CLI. `host`, `ai`, `doctor`, `snapshot` and `backup` ask the same D-Bus services
+//! Corona uses. The other commands are only a line in the help so far.
 
 mod ai;
+mod backup;
 mod doctor;
 mod host;
+mod restore;
 mod snapshot;
 mod text;
 
@@ -24,7 +26,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "backup",
-        "Run an encrypted backup to a Vault target",
+        "List, make and restore from encrypted backups",
         "Phase 2",
     ),
     (
@@ -63,6 +65,7 @@ fn main() -> ExitCode {
         Some("ai") => ai::run(rest),
         Some("doctor") => doctor::run(rest),
         Some("snapshot") => snapshot::run(rest),
+        Some("backup") => backup::run(rest),
         Some(cmd) => {
             if let Some((name, what, phase)) = COMMANDS.iter().find(|(name, _, _)| *name == cmd) {
                 eprintln!("eclipse {name}: {what}. Not implemented yet ({phase}).");

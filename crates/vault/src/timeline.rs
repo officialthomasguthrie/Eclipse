@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -138,24 +138,7 @@ pub struct Timeline {
 impl Timeline {
     /// Every snapshot, oldest first.
     pub fn list(&self) -> io::Result<Vec<String>> {
-        let entries = match fs::read_dir(&self.snapshots) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e),
-        };
-        let mut names = Vec::new();
-        for entry in entries {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            if let Some(name) = entry.file_name().to_str().filter(|n| parse(n).is_some()) {
-                names.push(name.to_string());
-            }
-        }
-        // names of one fixed width sort the way their times do
-        names.sort_unstable();
-        Ok(names)
+        names_in(&self.snapshots)
     }
 
     /// Takes a read-only snapshot now, then runs the rules. Returns its name and the names the
@@ -203,21 +186,47 @@ impl Timeline {
         Ok(dropped)
     }
 
-    /// Holds an flock on the snapshot directory until the file is dropped, so a snapshot from the
-    /// timer and one from the bus never change the directory at the same time.
     fn lock(&self) -> Result<File, String> {
-        let directory = &self.snapshots;
-        fs::create_dir_all(directory)
-            .and_then(|()| File::open(directory))
-            .and_then(|file| {
-                rustix::fs::flock(&file, FlockOperation::LockExclusive)?;
-                Ok(file)
-            })
-            .map_err(|e| format!("Could not lock {}: {e}", directory.display()))
+        lock(&self.snapshots)
     }
 }
 
-fn now() -> i64 {
+/// The names of the snapshots in `directory`, oldest first. Anything not named by a time is left
+/// out.
+pub fn names_in(directory: &Path) -> io::Result<Vec<String>> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        if let Some(name) = entry.file_name().to_str().filter(|n| parse(n).is_some()) {
+            names.push(name.to_string());
+        }
+    }
+    // names of one fixed width sort the way their times do
+    names.sort_unstable();
+    Ok(names)
+}
+
+/// Holds an flock on `directory` until the file is dropped, so a snapshot from the timer and one
+/// from the bus never change the directory at the same time.
+pub fn lock(directory: &Path) -> Result<File, String> {
+    fs::create_dir_all(directory)
+        .and_then(|()| File::open(directory))
+        .and_then(|file| {
+            rustix::fs::flock(&file, FlockOperation::LockExclusive)?;
+            Ok(file)
+        })
+        .map_err(|e| format!("Could not lock {}: {e}", directory.display()))
+}
+
+pub fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
@@ -225,7 +234,7 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
-fn btrfs<'a>(args: impl IntoIterator<Item = &'a OsStr>) -> Result<(), String> {
+pub fn btrfs<'a>(args: impl IntoIterator<Item = &'a OsStr>) -> Result<(), String> {
     let args: Vec<&OsStr> = args.into_iter().collect();
     let line = args
         .iter()
