@@ -77,7 +77,9 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build
         id: build
-        run: nix build .#image -L --print-build-logs --keep-failed || { echo "failed=1" >> "$GITHUB_OUTPUT"; exit 1; }
+        # the image in result, and in result-1 the update files of the same system a version on,
+        # which the boot test installs
+        run: nix build .#image .#update -L --print-build-logs --keep-failed || { echo "failed=1" >> "$GITHUB_OUTPUT"; exit 1; }
       - name: Report the size of the store partition
         # the store has to fit its 8G slot. repart makes the partition as big as what is in it, so
         # its size in the partition table is the number that counts
@@ -121,6 +123,9 @@ jobs:
           img=$(ls result/*.raw | head -n1)
           zstd -T0 -12 "$img" -o eclipse.raw.zst
           ls -la result/ eclipse.raw.zst
+          # the update files are compressed already. out of the store, where they are read only
+          cp -rL --no-preserve=mode result-1 updates
+          ls -la updates
       - name: Drop the images older runs left
         # each one is 2G and the account has a storage quota. the upload below replaces them, so
         # only this run's image is kept. without this the upload fails with "storage quota has
@@ -134,12 +139,14 @@ jobs:
             echo "dropping artifact $id from $created"
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" || true
           done
-      - name: Hand the image to the boot job
+      - name: Hand the image and the update to the boot job
         # through the cache, not an artifact: artifact storage has a quota of its own and a full
         # one refuses every upload for hours, which used to take the boot job down with it
         uses: actions/cache/save@v4
         with:
-          path: eclipse.raw.zst
+          path: |
+            eclipse.raw.zst
+            updates
           key: image-${{ github.sha }}
       - uses: actions/upload-artifact@v4
         # the image to download and flash. the boot job does not need it, so a full quota here
@@ -164,10 +171,13 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@v4
-      - name: Take the image from the image job
+      - name: Take the image and the update from the image job
         uses: actions/cache/restore@v4
         with:
-          path: eclipse.raw.zst
+          # the same paths the image job saved, or the cache is not found
+          path: |
+            eclipse.raw.zst
+            updates
           key: image-${{ github.sha }}
           fail-on-cache-miss: true
       - uses: DeterminateSystems/determinate-nix-action@v3
@@ -208,9 +218,14 @@ jobs:
           # zstd keeps the mode of what it compressed, and that was a store file at 444. the vm
           # app copies a read-only image and a second 5.7G does not fit on the runner
           chmod u+w eclipse.raw
+          # the update files go on a drive of their own, persist has no room for them. the test
+          # mounts it where systemd-sysupdate looks for updates
+          truncate -s "$(($(du -sm updates | cut -f1) + 512))M" updates.img
+          mkfs.ext4 -q -F -L updates -d updates updates.img
+          rm -r updates
           printf 'eclipse-test' > pass.txt
           python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw pass.txt --models models/cache \
-            --log serial.log --splash splash.png --desktop desktop.png --corona
+            --log serial.log --splash splash.png --desktop desktop.png --corona --updates updates.img --timeout 1200
       - uses: actions/upload-artifact@v4
         if: always()
         continue-on-error: true

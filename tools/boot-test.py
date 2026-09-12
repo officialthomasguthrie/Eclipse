@@ -3,7 +3,7 @@
 runs this.
 
 Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeout 600] [--log serial.log]
-       [--splash splash.png] [--desktop desktop.png] [--corona]
+       [--splash splash.png] [--desktop desktop.png] [--corona] [--updates updates.img]
 
 <eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds slot b and the
 persist partition to the image with the passphrase from the passfile (persist-image.sh, through sudo),
@@ -15,6 +15,13 @@ arrives and kept in the log file.
 The slots: systemd-boot started the uki with a boot counter in its name, the boot reached
 boot-complete.target and the counter is gone, systemd-sysupdate lists the running version as
 installed, /usr runs from slot a, and slot b's two partitions are there and empty.
+
+With --updates the vm gets a second drive, an ext4 file system labelled updates that holds the update
+files of a newer version (nix build .#update). After the other checks the test mounts it where
+systemd-sysupdate reads updates and installs that version: its store and verity partitions in slot b
+with the uuids from the file names, its uki on the esp with three tries. The vm reboots and the slots
+are checked again for the new version: systemd-boot started its uki, the boot was marked good,
+sysupdate lists both versions with the new one current, and /usr runs from slot b.
 
 With --models the files in that directory go into the @models subvolume before boot. The test waits
 on the system bus until aurad has loaded the model it picked for syzygy's tier, checks that it is the
@@ -200,6 +207,8 @@ WRONG_PASSWORD = "wrongpassword"
 ESP_TYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 USR_TYPE = "8484680c-9521-48c6-9c11-b0720656f69e"
 USR_VERITY_TYPE = "77ff5f63-e7b6-4633-acf4-1565b864c0e6"
+# where the transfers in nix/image/ab-sysupdate.nix read a new version from
+UPDATES = "/var/lib/eclipse/updates"
 
 
 def near(pixel, color, tolerance):
@@ -478,12 +487,14 @@ def main():
     ap.add_argument("--desktop", help="take a screendump of the session, check it, save it as this png")
     ap.add_argument("--desktop-timeout", type=int, default=60, help="seconds for umbra to paint its first frame")
     ap.add_argument("--corona", action="store_true", help="expect corona's panel on the desktop")
+    ap.add_argument("--updates", help="an ext4 image labelled updates with a newer version's update files, "
+                    "install them and reboot into that version")
     args = ap.parse_args()
     with open(args.passfile, encoding="utf-8") as f:
         passphrase = f.read()
 
     work = tempfile.mkdtemp(prefix="eclipse-boot-")
-    if (args.splash or args.desktop) and not args.qmp:
+    if (args.splash or args.desktop or args.updates) and not args.qmp:
         args.qmp = os.path.join(work, "qmp.sock")
 
     # the app picks kvm or tcg and the firmware. what follows its options replaces its defaults.
@@ -504,6 +515,10 @@ def main():
         cmd[5:5] = ["--models", os.path.abspath(args.models)]
     if args.qmp:
         cmd += ["-qmp", f"unix:{args.qmp},server,nowait"]
+    if args.updates:
+        # a second nvme drive. nothing on the system mounts it, the test does
+        cmd += ["-drive", f"if=none,id=updates,format=raw,file={os.path.abspath(args.updates)}",
+                "-device", "nvme,drive=updates,serial=updates"]
     print("boot-test: " + " ".join(cmd), flush=True)
 
     start = time.monotonic()
@@ -540,6 +555,18 @@ def main():
         status = int(child.match.group(1))
         return status, ESCAPES.sub("", child.before).replace("\r", "")
 
+    def unlock():
+        """Answer the luks prompt that is up and wait for the autologin shell."""
+        child.send(passphrase + "\r")
+        for attempt in range(3):
+            if expect([PROMPT, PASSPHRASE], "the autologin shell") == 0:
+                break
+            if attempt == 2:
+                fail("the passphrase was refused three times")
+            print("\nboot-test: passphrase prompt again, retrying", flush=True)
+            child.send(passphrase + "\r")
+        ok("shell")
+
     # 1. the luks prompt, answered over serial. a second prompt means the passphrase was refused.
     expect([PASSPHRASE], "the luks passphrase prompt")
     ok("passphrase prompt")
@@ -558,15 +585,7 @@ def main():
             fail(f"the splash is not on screen, see {args.splash}")
         ok("splash")
 
-    child.send(passphrase + "\r")
-    for attempt in range(3):
-        if expect([PROMPT, PASSPHRASE], "the autologin shell") == 0:
-            break
-        if attempt == 2:
-            fail("the passphrase was refused three times")
-        print("\nboot-test: passphrase prompt again, retrying", flush=True)
-        child.send(passphrase + "\r")
-    ok("shell")
+    unlock()
 
     # 2. the system is ours
     child.send("eclipse --version\r")
@@ -608,14 +627,16 @@ def main():
     # 2b. the slots. systemd-boot started the uki with its boot counter, boot-complete.target was
     # reached and systemd-bless-boot took the counter off the file name, sysupdate finds this version
     # installed, /usr runs from slot a, and slot b's two partitions wait empty behind it
-    def check_slots():
-        """Check how this boot came up on the a/b layout and return the running version."""
+    def check_slots(slot="a", other=None):
+        """Check how this boot came up on the a/b layout and return the running version. slot is the
+        slot it should run from, other the version in the other slot, None while that one is empty."""
         status, output = run("grep '^IMAGE_VERSION=' /etc/os-release", "the image version")
         found = re.search(r'^IMAGE_VERSION="?([^"\s]+)"?\s*$', without_console(output), re.M)
         if status != 0 or not found:
             fail(f"/etc/os-release has no IMAGE_VERSION: {without_console(output).strip()!r}")
         version = found.group(1)
         uki = f"eclipse_{version}.efi"
+        installed = sorted(v for v in (version, other) if v)
 
         _, output = run("ls /dev/disk/by-designator/", "udev's names for the partitions of the boot drive")
         print(f"\nboot-test: /dev/disk/by-designator holds:\n{without_console(output)}", flush=True)
@@ -652,16 +673,17 @@ def main():
         if not found or found.group(1) != "good":
             fail(f"systemd-bless-boot says {found.group(1) if found else without_console(output).strip()!r}, expected good")
         _, output = run("sudo ls -1 /boot/EFI/Linux", "the ukis on the esp")
-        ukis = without_console(output).split()
-        if ukis != [uki]:
-            fail(f"the esp holds {ukis}, expected {uki} alone and without its boot counter")
+        ukis = sorted(without_console(output).split())
+        wanted = sorted(f"eclipse_{v}.efi" for v in installed)
+        if ukis != wanted:
+            fail(f"the esp holds {ukis}, expected {wanted}, without boot counters")
 
         _, output = run("sudo systemd-sysupdate --offline --json=short list", "systemd-sysupdate list")
         found = re.search(r'^\{"current.*\}\s*$', without_console(output), re.M)
         listing = json.loads(found.group(0)) if found else {}
-        if listing.get("current") != version or listing.get("all") != [version]:
-            fail(f"systemd-sysupdate lists {without_console(output).strip()[-600:]!r}, expected {version} installed "
-                 "and nothing else")
+        if listing.get("current") != version or sorted(listing.get("all", [])) != installed:
+            fail(f"systemd-sysupdate lists {without_console(output).strip()[-600:]!r}, expected {version} current "
+                 f"and {', '.join(installed)} installed")
 
         # esp, slot a, slot b in partition order, then persist
         _, output = run("lsblk -brno NAME,PARTLABEL,PARTTYPE,SIZE /dev/(lsblk -no PKNAME /dev/disk/by-designator/esp)",
@@ -671,26 +693,28 @@ def main():
         parts = [row.split() for row in printed.splitlines()]
         parts = [(name, label, kind.lower(), int(size)) for name, label, kind, size in (p for p in parts if len(p) == 4)]
         gib = 1024**3
-        wanted = [
-            ("esp", ESP_TYPE, gib),
-            (f"store-verity_{version}", USR_VERITY_TYPE, gib),
-            (f"store_{version}", USR_TYPE, 8 * gib),
-            ("_empty", USR_VERITY_TYPE, gib),
-            ("_empty", USR_TYPE, 8 * gib),
-        ]
+        wanted = [("esp", ESP_TYPE, gib)]
+        for held in ((version, other) if slot == "a" else (other, version)):
+            wanted += [
+                (f"store-verity_{held}" if held else "_empty", USR_VERITY_TYPE, gib),
+                (f"store_{held}" if held else "_empty", USR_TYPE, 8 * gib),
+            ]
         if [p[1:] for p in parts[:5]] != wanted or len(parts) < 6 or parts[5][1] != "persist":
             fail(f"the boot drive's partitions are {[p[1:] for p in parts]}, expected {wanted} and then persist")
 
-        store_a = parts[2][0]
+        store = parts[2 if slot == "a" else 4][0]
         _, output = run("sudo veritysetup status usr", "the verity device under /usr")
         data = re.search(r"data device:\s*(\S+)", without_console(output))
-        if not data or data.group(1) != f"/dev/{store_a}":
-            fail(f"/usr runs from {data.group(1) if data else without_console(output).strip()!r}, expected slot a on /dev/{store_a}")
+        if not data or data.group(1) != f"/dev/{store}":
+            fail(f"/usr runs from {data.group(1) if data else without_console(output).strip()!r}, "
+                 f"expected slot {slot} on /dev/{store}")
+        rest = f"slot {'b' if slot == 'a' else 'a'} holds {other}" if other else "slot b is empty"
         ok(f"{loader.group(1)} started {uki}, the boot was marked good at {blessed} and the counter is gone, "
-           f"sysupdate lists {version} installed, /usr runs from slot a on {store_a}, slot b is empty")
+           f"sysupdate lists {', '.join(installed)} installed and {version} current, /usr runs from slot {slot} "
+           f"on {store}, {rest}")
         return version
 
-    check_slots()
+    running = check_slots()
 
     # 3. syzygy: the profile it wrote into @hosts, and the same answers on the system bus.
     # fish puts a bare \r before a command's output, so these anchor on the whitespace after the
@@ -1144,7 +1168,86 @@ def main():
                 look("the answer under the field", f"{stem}-corona-answer{extension}", args.answer_timeout,
                      rows=(1, LIST_ROWS))
 
-    # 6. down
+    # 6. the update. the second drive holds a newer version's files. systemd-sysupdate checks them
+    # against SHA256SUMS, writes the store and its verity partition into slot b under the uuids in
+    # their names and puts the uki on the esp with three tries. then the vm reboots into it
+    if args.updates:
+        status, output = run(f"sudo mkdir -p {UPDATES}; and sudo mount -o ro /dev/disk/by-label/updates {UPDATES}; "
+                             f"and ls -1 {UPDATES}", "the update files")
+        names = without_console(output).split()
+        if status != 0:
+            fail(f"the updates drive could not be mounted on {UPDATES}: {without_console(output).strip()!r}")
+        print(f"\nboot-test: {UPDATES} holds:\n" + "\n".join(names), flush=True)
+        new = next((found.group(1) for found in (re.fullmatch(r"eclipse_([^_]+)\.efi", name) for name in names)
+                    if found), None)
+        if not new or new == running:
+            fail(f"the updates drive has no uki of a version other than {running}: {names}")
+
+        def uuid_in_name(kind):
+            for name in names:
+                found = re.fullmatch(rf"eclipse_{re.escape(new)}_([0-9a-fA-F-]{{36}})\.{kind}(?:\.zst)?", name)
+                if found:
+                    return found.group(1).lower()
+            fail(f"the updates drive has no {kind} file for {new}: {names}")
+
+        verity_uuid, store_uuid = uuid_in_name("verity"), uuid_in_name("store")
+
+        # the store is about 6G, written from the zstd file on the other drive
+        started = time.monotonic()
+        _, output = run("sudo systemd-sysupdate --verify=no update 2>&1 | tail -n 40; echo update-status=$pipestatus[1]",
+                        "systemd-sysupdate update")
+        took = time.monotonic() - started
+        printed = without_console(output)
+        print(f"\nboot-test: systemd-sysupdate update printed:\n{printed}", flush=True)
+        found = re.search(r"update-status=(\d+)", printed)
+        if not found or found.group(1) != "0":
+            fail(f"systemd-sysupdate update exited with {found.group(1) if found else 'no status'}")
+
+        _, output = run("sudo systemd-sysupdate --offline --json=short list", "systemd-sysupdate list after the update")
+        found = re.search(r'^\{"current.*\}\s*$', without_console(output), re.M)
+        listing = json.loads(found.group(0)) if found else {}
+        if listing.get("current") != running or sorted(listing.get("all", [])) != sorted([running, new]):
+            fail(f"systemd-sysupdate lists {without_console(output).strip()[-600:]!r} after the update, expected "
+                 f"{running} current and {new} installed next to it")
+
+        # three tries left and none done. systemd-boot takes one off each time it starts the file
+        _, output = run("sudo ls -1 /boot/EFI/Linux", "the ukis on the esp after the update")
+        ukis = sorted(without_console(output).split())
+        wanted = sorted([f"eclipse_{running}.efi", f"eclipse_{new}+3-0.efi"])
+        if ukis != wanted:
+            fail(f"the esp holds {ukis} after the update, expected {wanted}")
+
+        # the table on the drive itself, udev may not have read the new labels yet
+        _, output = run("sudo sfdisk --dump /dev/(lsblk -no PKNAME /dev/disk/by-designator/esp)",
+                        "the partition table after the update")
+        table = [(name, uuid.lower()) for uuid, name in
+                 re.findall(r'uuid=([0-9A-Fa-f-]{36}), name="([^"]*)"', without_console(output))]
+        wanted = [(f"store-verity_{new}", verity_uuid), (f"store_{new}", store_uuid)]
+        if [name for name, _ in table[1:3]] != [f"store-verity_{running}", f"store_{running}"] or table[3:5] != wanted:
+            fail(f"the partitions after the update are {table}, expected {running} in slot a and {wanted} in slot b")
+        run(f"sudo umount {UPDATES}", "unmounting the updates drive")
+        ok(f"systemd-sysupdate installed {new} in {took:.0f}s: verity {verity_uuid} and store {store_uuid} in slot b, "
+           f"eclipse_{new}+3-0.efi on the esp")
+
+        # -no-reboot ends qemu when the guest reboots. for this one reboot the vm resets instead
+        def reboot_action(action):
+            try:
+                qmp(args.qmp, {"execute": "set-action", "arguments": {"reboot": action}})
+            except (OSError, RuntimeError) as e:
+                fail(f"qmp set-action reboot={action}: {e}")
+
+        reboot_action("reset")
+        child.send("sudo systemctl reboot\r")
+        expect([PASSPHRASE], "the luks passphrase prompt after the reboot")
+        ok("passphrase prompt after the reboot")
+        unlock()
+        reboot_action("shutdown")
+        after = check_slots(slot="b", other=running)
+        if after != new:
+            fail(f"the vm came back running {after}, expected {new}")
+        ok(f"rebooted into {new} from slot b, {running} stays in slot a")
+
+    # 7. down
     child.send("sudo systemctl poweroff\r")
     try:
         child.expect(pexpect.EOF, timeout=90)

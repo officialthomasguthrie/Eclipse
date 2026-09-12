@@ -155,6 +155,19 @@
           );
           isImageHost = system == "x86_64-linux";
           os = self.nixosConfigurations.eclipse.config;
+          # the same system a minor version on. the boot test installs its update files into slot b
+          # and reboots into it
+          next = self.nixosConfigurations.eclipse.extendModules {
+            modules = [
+              {
+                system.image.version =
+                  let
+                    v = os.system.image.version;
+                  in
+                  lib.mkForce "${lib.versions.major v}.${toString (lib.toInt (lib.versions.minor v) + 1)}.0";
+              }
+            ];
+          };
         in
         {
           packages = {
@@ -164,6 +177,8 @@
           // lib.optionalAttrs pkgs.stdenv.isLinux { inherit umbra; }
           // lib.optionalAttrs isImageHost {
             image = os.system.build.image;
+            # the files systemd-sysupdate installs the next version from
+            update = import ./nix/image/update.nix { inherit (next) config pkgs; };
             # boots a raw image in qemu. `nix run .#vm` hands it the image above, the boot test builds
             # this package and hands it the image from the artifact. the drive is nvme, not an emulated
             # usb stick: qemu's usb storage returns bad blocks now and then and verity refuses them.
