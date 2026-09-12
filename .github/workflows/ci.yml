@@ -77,9 +77,9 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build
         id: build
-        # the image in result, and in result-1 the update files of the same system a version on,
-        # which the boot test installs
-        run: nix build .#image .#update -L --print-build-logs --keep-failed || { echo "failed=1" >> "$GITHUB_OUTPUT"; exit 1; }
+        # the image in result, in result-1 the update files of the same system a version on, and in
+        # result-2 those of a version after it that never boots well. the boot test installs both
+        run: nix build .#image .#update .#broken-update -L --print-build-logs --keep-failed || { echo "failed=1" >> "$GITHUB_OUTPUT"; exit 1; }
       - name: Report the size of the store partition
         # the store has to fit its 8G slot. repart makes the partition as big as what is in it, so
         # its size in the partition table is the number that counts
@@ -123,9 +123,12 @@ jobs:
           img=$(ls result/*.raw | head -n1)
           zstd -T0 -12 "$img" -o eclipse.raw.zst
           ls -la result/ eclipse.raw.zst
-          # the update files are compressed already. out of the store, where they are read only
-          cp -rL --no-preserve=mode result-1 updates
-          ls -la updates
+          # the update files are compressed already. out of the store, where they are read only, one
+          # directory for each version
+          mkdir updates
+          cp -rL --no-preserve=mode result-1 updates/next
+          cp -rL --no-preserve=mode result-2 updates/broken
+          ls -la updates/*
       - name: Drop the images older runs left
         # each one is 2G and the account has a storage quota. the upload below replaces them, so
         # only this run's image is kept. without this the upload fails with "storage quota has
@@ -164,7 +167,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: image
     if: ${{ github.event_name != 'pull_request' }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       # the last step drops the image out of the cache again
@@ -219,7 +222,7 @@ jobs:
           # app copies a read-only image and a second 5.7G does not fit on the runner
           chmod u+w eclipse.raw
           # the update files go on a drive of their own, persist has no room for them. the test
-          # mounts it where systemd-sysupdate looks for updates
+          # mounts each version's directory where systemd-sysupdate looks for updates
           truncate -s "$(($(du -sm updates | cut -f1) + 512))M" updates.img
           mkfs.ext4 -q -F -L updates -d updates updates.img
           rm -r updates

@@ -155,17 +155,40 @@
           );
           isImageHost = system == "x86_64-linux";
           os = self.nixosConfigurations.eclipse.config;
+          # the image's version with the minor version n on
+          bump =
+            n:
+            let
+              v = os.system.image.version;
+            in
+            lib.mkForce "${lib.versions.major v}.${toString (lib.toInt (lib.versions.minor v) + n)}.0";
           # the same system a minor version on. the boot test installs its update files into slot b
           # and reboots into it
           next = self.nixosConfigurations.eclipse.extendModules {
+            modules = [ { system.image.version = bump 1; } ];
+          };
+          # two minor versions on, with a boot check that always fails. it comes up to the shell but
+          # never reaches boot-complete.target, so systemd-boot gives up on it after three boots and
+          # the boot test sees the version before it start again
+          broken = self.nixosConfigurations.eclipse.extendModules {
             modules = [
-              {
-                system.image.version =
-                  let
-                    v = os.system.image.version;
-                  in
-                  lib.mkForce "${lib.versions.major v}.${toString (lib.toInt (lib.versions.minor v) + 1)}.0";
-              }
+              (
+                { pkgs, ... }:
+                {
+                  system.image.version = bump 2;
+                  systemd.services.never-good = {
+                    description = "Boot check that always fails";
+                    serviceConfig = {
+                      Type = "oneshot";
+                      ExecStart = "${pkgs.coreutils}/bin/false";
+                    };
+                  };
+                  systemd.targets.boot-complete = {
+                    requires = [ "never-good.service" ];
+                    after = [ "never-good.service" ];
+                  };
+                }
+              )
             ];
           };
         in
@@ -179,6 +202,8 @@
             image = os.system.build.image;
             # the files systemd-sysupdate installs the next version from
             update = import ./nix/image/update.nix { inherit (next) config pkgs; };
+            # and the version after it, which is never marked good
+            broken-update = import ./nix/image/update.nix { inherit (broken) config pkgs; };
             # boots a raw image in qemu. `nix run .#vm` hands it the image above, the boot test builds
             # this package and hands it the image from the artifact. the drive is nvme, not an emulated
             # usb stick: qemu's usb storage returns bad blocks now and then and verity refuses them.
