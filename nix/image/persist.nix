@@ -29,14 +29,16 @@ in
   boot.initrd.luks.devices.persist = {
     device = "/dev/disk/by-partlabel/persist";
     allowDiscards = true;
+    # a new drive has no persist partition until its passphrase is chosen, which takes longer than
+    # the 90 s systemd waits for a device. a device job cannot be ordered after a service
+    crypttabExtraOpts = [ "x-systemd.device-timeout=infinity" ];
     # fido2 and tpm2 get enrolled with systemd-cryptenroll later
   };
 
   # vault-first-boot runs before persist is opened. on a drive without persist it asks for a
   # passphrase on the splash, makes persist in the free space and opens it, so systemd-cryptsetup
   # finds it open and asks nothing. it also formats an exchange partition that has no file system.
-  # the job that waits for the persist partition waits behind it, or its 90 s would run out while
-  # the passphrase is typed
+  # when it fails the boot stops with its message instead of waiting for persist for ever
   boot.initrd.systemd = {
     storePaths = [
       firstBoot
@@ -64,9 +66,11 @@ in
       before = [
         "cryptsetup-pre.target"
         "systemd-cryptsetup@persist.service"
-        "dev-disk-by\\x2dpartlabel-persist.device"
       ];
-      unitConfig.DefaultDependencies = false;
+      unitConfig = {
+        DefaultDependencies = false;
+        OnFailure = "emergency.target";
+      };
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;

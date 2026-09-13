@@ -146,8 +146,10 @@ fn read_disk(disk: &str) -> Result<Table, String> {
 
 /// Whether blkid finds a file system, a LUKS header or anything else it knows on a partition.
 fn holds_something(node: &str) -> Result<bool, String> {
+    // without --no-part-details a probe prints the partition's own table entry and finds something
+    // on every partition
     let probed = Command::new("blkid")
-        .args(["--probe", node])
+        .args(["--probe", "--no-part-details", node])
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("Could not run blkid: {e}"))?;

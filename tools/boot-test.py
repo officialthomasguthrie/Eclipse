@@ -654,6 +654,10 @@ def main():
         """Answer the first boot's questions for a new passphrase: one too short, two that differ, then
         the passphrase twice. The drive makes persist, opens it and goes on to the autologin shell
         without asking again."""
+        # a person takes a while to choose a passphrase. systemd gives up on a device after 90 s, and
+        # the persist partition only comes once the passphrase is in
+        print("\nboot-test: waiting 100 s before answering, as a person choosing a passphrase would", flush=True)
+        time.sleep(100)
         child.send("short77\r")
         expect([rf"at least 8 characters\. {CHOOSE}"], "the question again after a passphrase that is too short")
         child.send(passphrase + "\r")
