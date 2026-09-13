@@ -31,7 +31,7 @@ pub trait System {
     /// file.
     fn disk(&self, target: &str) -> Option<Result<Disk, String>>;
 
-    /// Lets go of what is mounted from the disk and opens it to be written.
+    /// Unmounts or clears what is on the disk and opens it to be written.
     ///
     /// # Errors
     ///
