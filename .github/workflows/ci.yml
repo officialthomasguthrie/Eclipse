@@ -104,8 +104,8 @@ jobs:
           image=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount drive.img | awk 'NR == 1 { print $1 }')
           "$flash" list | tee list.txt
           grep -qF "$image, Disk Image, 24.0 GiB." list.txt
-          # the app with the disk image listed and selected, in a picture
-          timeout 120 target/release/eclipse-flash-app --screenshot flash-app-macos.png sample.raw.zst
+          # the app with the disk image listed and selected, in a picture. macos has no timeout command
+          perl -e 'alarm 120; exec @ARGV' target/release/eclipse-flash-app --screenshot flash-app-macos.png sample.raw.zst
           test -s flash-app-macos.png
           refused "a wrong name" "is not the name of $image\. Nothing was written\." \
             sudo "$flash" write --serial disk99 sample.raw.zst "$image"
