@@ -3,6 +3,7 @@
 //! Nothing here needs an ioctl: a disk with no partitions has no volume for Windows to protect.
 
 use std::fs::{File, OpenOptions};
+use std::os::windows::process::CommandExt;
 use std::process::Command;
 
 use libeclipse::disk::{Disk, GET_DISK, read_get_disk};
@@ -26,10 +27,15 @@ impl Windows {
     }
 }
 
+/// Keeps a console program from opening a window of its own when a program without a console, the
+/// app, starts it.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Runs one line of PowerShell and returns what it printed.
 fn powershell(line: &str) -> Result<String, String> {
     let output = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", line])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("Could not run PowerShell: {e}"))?;
     if output.status.success() {

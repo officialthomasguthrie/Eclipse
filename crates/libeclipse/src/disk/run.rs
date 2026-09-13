@@ -418,6 +418,17 @@ pub trait Drive: Read + Write + Seek {
     ///
     /// When the system cannot.
     fn sync(&mut self) -> io::Result<()>;
+
+    /// Drops what the system keeps of the drive in memory, so what is read next comes from the disk
+    /// and not from a cache. Linux keeps a disk opened as a file in its page cache; a raw disk on
+    /// macOS and a physical drive on Windows are read from the disk anyway.
+    ///
+    /// # Errors
+    ///
+    /// When the system cannot.
+    fn uncache(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl Drive for File {

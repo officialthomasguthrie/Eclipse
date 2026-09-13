@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use libeclipse::disk::run::{self, Drive, copy_to};
 use libeclipse::disk::{ALIGN, Bus, Disk, Partition, SECTOR, Table, needed, plan, size, write_gpt};
 
-use crate::Request;
 use crate::drive::check_file;
 use crate::image::{Image, Reader};
+use crate::{Listed, Request};
 
 /// What eclipse-flash needs from a system to write a drive onto one of its disks.
 pub trait System {
@@ -68,23 +68,17 @@ fn in_use(disk: &Disk) -> Option<String> {
     (disk.bus == Bus::Image).then(|| disk.mounted()).flatten()
 }
 
-/// What `eclipse-flash list` prints: the sticks and USB disks that are plugged in, and why one cannot
-/// be written onto now.
-pub fn list(system: &impl System) -> Vec<String> {
-    let mut lines = Vec::new();
-    for disk in system.disks().iter().filter(|disk| disk.listed()) {
-        if !lines.is_empty() {
-            lines.push(String::new());
-        }
-        lines.extend(disk.describe());
-        if let Err(why) = disk.refuse(needed(0, None), in_use(disk).as_deref()) {
-            lines.push(why);
-        }
-    }
-    if lines.is_empty() {
-        lines.push("No stick or USB disk is plugged in.".into());
-    }
-    lines
+/// The sticks and USB disks that are plugged in, and why one cannot be written onto now.
+pub fn listed(system: &impl System) -> Vec<Listed> {
+    system
+        .disks()
+        .iter()
+        .filter(|disk| disk.listed())
+        .map(|disk| Listed {
+            refused: disk.refuse(needed(0, None), in_use(disk).as_deref()).err(),
+            disk: disk.clone(),
+        })
+        .collect()
 }
 
 /// `eclipse-flash write`: shows the image and the disk, has its serial or name typed back and writes
@@ -248,7 +242,8 @@ pub fn empty(path: &Path, bytes: u64) -> Result<File, String> {
 /// Writes a drive: a new partition table without persist, the image's esp and slot A copied into
 /// theirs, slot B empty. On a disk the start and the end of the disk, the start of each partition that
 /// is not copied and the start of the space after them are zeroed first, so no old table or file
-/// system is found there. The table is written last, then read back.
+/// system is found there. The table is written last. Then the table, the esp and the slot are read
+/// back.
 ///
 /// # Errors
 ///
@@ -353,7 +348,26 @@ pub fn write_drive(
             ));
         }
     }
+    read_back(image, drive, (path, &table), say)?;
     Ok(table)
+}
+
+/// Reads the esp and the slot back from the drive and compares them with the image.
+fn read_back(
+    image: &Image,
+    drive: &mut impl Drive,
+    (path, table): (&Path, &Table),
+    say: &mut impl FnMut(String),
+) -> Result<(), String> {
+    say(format!("Reading {} back to check it.", path.display()));
+    drive
+        .uncache()
+        .map_err(|e| format!("Could not read {} back: {e}", path.display()))?;
+    let mut check = image.check()?;
+    let at = |number: usize| (path, table.offset(&table.partitions[number]));
+    check.partition(&image.esp, drive, at(0), &mut |_| {})?;
+    check.partition(&image.slot.verity, drive, at(1), &mut |_| {})?;
+    check.partition(&image.slot.store, drive, at(2), say)
 }
 
 /// What is zeroed at each place, in bytes: a MiB, which holds every table and file system header that
@@ -368,22 +382,35 @@ mod tests {
     use std::io::{Read, Seek, Write};
     use std::rc::Rc;
 
-    use libeclipse::disk::{GIB, GPT_BYTES, read_gpt};
+    use libeclipse::disk::{GIB, GPT_BYTES, MIB, read_gpt};
 
     use super::*;
     use crate::sample;
 
     const CHUNK: u64 = 1 << 20;
 
-    /// A disk in memory, a MiB at a time, that remembers where each write went.
+    /// A disk in memory, a MiB at a time, that remembers where each write went. With `holds` it is a
+    /// fake stick: it holds that many bytes, and what goes past them lands at the start again.
     #[derive(Default)]
     struct Memory {
         chunks: HashMap<u64, Vec<u8>>,
         at: u64,
         writes: Vec<(u64, usize)>,
+        holds: Option<u64>,
     }
 
     impl Memory {
+        /// Where the next byte really goes, and how many bytes fit before the stick wraps around.
+        fn place(&self) -> (u64, usize) {
+            match self.holds {
+                Some(holds) => (
+                    self.at % holds,
+                    usize::try_from(holds - self.at % holds).unwrap(),
+                ),
+                None => (self.at, usize::MAX),
+            }
+        }
+
         fn read_at(&mut self, offset: u64, count: usize) -> Vec<u8> {
             let mut read = vec![0; count];
             self.at = offset;
@@ -398,8 +425,12 @@ mod tests {
 
     impl Read for Memory {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            let (chunk, inside) = within(self.at);
-            let count = buf.len().min(usize::try_from(CHUNK).unwrap() - inside);
+            let (at, room) = self.place();
+            let (chunk, inside) = within(at);
+            let count = buf
+                .len()
+                .min(usize::try_from(CHUNK).unwrap() - inside)
+                .min(room);
             match self.chunks.get(&chunk) {
                 Some(data) => buf[..count].copy_from_slice(&data[inside..inside + count]),
                 None => buf[..count].fill(0),
@@ -414,8 +445,11 @@ mod tests {
             self.writes.push((self.at, buf.len()));
             let mut done = 0;
             while done < buf.len() {
-                let (chunk, inside) = within(self.at);
-                let count = (buf.len() - done).min(usize::try_from(CHUNK).unwrap() - inside);
+                let (at, room) = self.place();
+                let (chunk, inside) = within(at);
+                let count = (buf.len() - done)
+                    .min(usize::try_from(CHUNK).unwrap() - inside)
+                    .min(room);
                 let data = self
                     .chunks
                     .entry(chunk)
@@ -668,6 +702,8 @@ mod tests {
         assert_eq!(said[0], format!("{} holds Eclipse 0.1.0.", image.display()));
         assert_eq!(said[1], "/dev/disk4, Ultra Fit, 24.0 GiB.");
         assert!(said.contains(&"Copying the system, version 0.1.0, 6 MiB.".to_string()));
+        assert!(said.contains(&"Reading /dev/disk4 back to check it.".to_string()));
+        assert!(said.contains(&"Checked 6 MiB of 6 MiB.".to_string()));
         assert!(
             said.last()
                 .unwrap()
@@ -695,6 +731,36 @@ mod tests {
         );
         // between the table and the esp too
         assert!(memory.read_at(512 * 40, 512).iter().all(|&byte| byte == 0));
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_stick_that_holds_less_than_it_says_is_found_by_the_read_back() {
+        let folder = folder("fake");
+        let image = folder.join("sample.raw.zst");
+        sample::write(&image).unwrap();
+        let system = fake();
+        // the stick says 24 GiB and holds 2 GiB and 4 MiB. the store is copied from 2 GiB and 1 MiB on,
+        // so its last 3 MiB land at the start of the stick, over the boot partition. the partition
+        // tables are written after that and read back as they were written
+        system.memory.borrow_mut().holds = Some(2 * GIB + 4 * MIB);
+        let mut stick = request(&image, "/dev/disk4");
+        stick.serial = Some("disk4".into());
+        let mut said = Vec::new();
+        let why = write(&stick, &system, &mut |_| None, &mut |line| said.push(line)).unwrap_err();
+        assert!(
+            why.starts_with(
+                "/dev/disk4 does not read back what was written at 1 MiB. The disk holds less than it says it does, or it is failing.\nThe drive was not finished"
+            ),
+            "{why}"
+        );
+        assert_eq!(said.last().unwrap(), "Reading /dev/disk4 back to check it.");
+        assert!(system.opened.get() && !system.finished.get());
+
+        // the same stick with all it says it holds is written, and read back
+        system.memory.borrow_mut().holds = None;
+        write(&stick, &system, &mut |_| None, &mut |_| {}).unwrap();
+        assert!(system.finished.get());
         fs::remove_dir_all(&folder).unwrap();
     }
 
@@ -776,6 +842,7 @@ mod tests {
 
     #[test]
     fn list_shows_sticks_and_why_they_are_refused() {
+        let list = |system: &Fake| crate::lines(&listed(system));
         let mut system = fake();
         assert_eq!(
             list(&system),

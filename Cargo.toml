@@ -9,6 +9,7 @@ members = [
   "crates/vault",
   "crates/eclipse-cli",
   "crates/eclipse-flash",
+  "crates/eclipse-flash-app",
   "crates/totality-splash",
   "crates/umbra",
   "crates/umbra-lock",

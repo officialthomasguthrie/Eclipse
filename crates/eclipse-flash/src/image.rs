@@ -66,6 +66,76 @@ impl Image {
     pub fn reader(&self) -> Result<Reader, String> {
         Reader::open(&self.path)
     }
+
+    /// A read back of what was copied from the image, which reads the image again from its start.
+    pub fn check(&self) -> Result<Check<'_>, String> {
+        Ok(Check {
+            image: self,
+            reader: self.reader()?,
+        })
+    }
+}
+
+/// How much is compared at a time.
+const CHUNK: usize = 4 << 20;
+
+/// Reads what was copied from an image back from the drive and compares it with the image. A stick
+/// that holds less than it says wraps around or drops what is written past its end, and then the
+/// bytes that read back are not the ones written. Found here, it is not found at boot by dm-verity.
+pub struct Check<'a> {
+    image: &'a Image,
+    reader: Reader,
+}
+
+impl Check<'_> {
+    /// Compares the image's partition `from` with what `drive`, which reads `to`, holds from `offset`
+    /// on, saying how far it is at each tenth. Partitions are compared in the order of the image.
+    pub fn partition(
+        &mut self,
+        from: &Partition,
+        drive: &mut (impl Read + Seek),
+        (to, offset): (&Path, u64),
+        say: &mut dyn FnMut(String),
+    ) -> Result<(), String> {
+        let image = self.image;
+        let reading = |e: io::Error| format!("Could not read {}: {e}", image.path.display());
+        let back = |e: io::Error| format!("Could not read {} back: {e}", to.display());
+        self.reader
+            .skip_to(image.table.offset(from))
+            .map_err(reading)?;
+        drive.seek(SeekFrom::Start(offset)).map_err(back)?;
+        let bytes = image.table.bytes(from);
+        let mut wanted = vec![0; CHUNK];
+        let mut found = vec![0; CHUNK];
+        let mut done = 0;
+        let mut tenth = 1;
+        while done < bytes {
+            let count = usize::try_from(bytes - done).map_or(CHUNK, |left| left.min(CHUNK));
+            self.reader
+                .read_exact(&mut wanted[..count])
+                .map_err(reading)?;
+            drive.read_exact(&mut found[..count]).map_err(back)?;
+            if let Some(at) = wanted[..count]
+                .iter()
+                .zip(&found[..count])
+                .position(|(written, read)| written != read)
+            {
+                return Err(format!(
+                    "{} does not read back what was written at {}. The disk holds less than it says it does, or it is failing.",
+                    to.display(),
+                    size(offset + done + u64::try_from(at).unwrap_or(0))
+                ));
+            }
+            done += u64::try_from(count).unwrap_or(u64::MAX);
+            if tenth < 10 && done * 10 >= bytes * tenth {
+                say(format!("Checked {} of {}.", size(done), size(bytes)));
+                while tenth < 10 && done * 10 >= bytes * tenth {
+                    tenth += 1;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The esp and the slot in an image's table. An image is exactly an esp, a verity partition and a

@@ -78,8 +78,9 @@
           craneLib = (crane.mkLib pkgsRust).overrideToolchain toolchain;
           src = craneLib.cleanCargoSource ./.;
           # the compositor is built apart from the small crates: it pulls in smithay and a dozen
-          # system libraries, and the rest of the workspace should stay cheap to build and check
-          firstParty = "--workspace --exclude umbra --exclude niri-config --exclude niri-ipc";
+          # system libraries, and the rest of the workspace should stay cheap to build and check. the
+          # eclipse-flash app runs on other systems, not on the drive, and ci builds it on all three
+          firstParty = "--workspace --exclude umbra --exclude niri-config --exclude niri-ipc --exclude eclipse-flash-app";
           common = {
             inherit src;
             strictDeps = true;

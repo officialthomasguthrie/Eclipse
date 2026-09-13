@@ -1,22 +1,24 @@
 //! Writing a drive on Linux: the disk or the file it goes onto and the rules for each, then the
 //! steps, through the same programs Vault's clone runs.
 
-use std::fs::{self, OpenOptions, Permissions};
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::fs::{self, File, OpenOptions, Permissions};
+use std::io::{self, BufRead, IsTerminal, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use libeclipse::disk::run::{self, Loop, Persist, copy, copy_file, feed, on_path, settle, tool};
+use libeclipse::disk::run::{
+    self, Drive, Loop, Persist, copy, copy_file, feed, on_path, settle, tool,
+};
 use libeclipse::disk::{
     Block, LSBLK, Partition, Table, confirmation, describe, disks_in, needed, partition_node,
     passphrase_problem, read_blocks, read_lsblk, read_table, refuse, script, size,
 };
 
-use crate::Request;
 use crate::direct::{self, Place};
 use crate::drive::{check_file, check_table, models_in};
 use crate::image::{Image, Reader};
+use crate::{Listed, Request};
 
 /// The programs every write runs, looked for before anything is erased.
 const TOOLS: [&str; 8] = [
@@ -112,34 +114,64 @@ struct Plan {
     models: Vec<PathBuf>,
 }
 
-/// `eclipse-flash list`: the sticks and USB disks that are plugged in, and why one cannot be written
-/// onto now.
-pub fn list() -> Result<(), String> {
+/// The sticks and USB disks that are plugged in, and why one cannot be written onto now.
+pub fn listed() -> Result<Vec<Listed>, String> {
     let blocks = read_blocks(&tool(
         Command::new("lsblk").args(["--json", "--bytes", "--output", LSBLK]),
     )?)?;
     let running = running_disks();
-    let mut shown = 0;
-    for disk in blocks.iter().filter(|block| {
-        block.kind == "disk"
-            && !running.contains(&block.name)
-            && (block.rm || block.tran.as_deref() == Some("usb"))
-    }) {
-        if shown > 0 {
-            println!();
-        }
-        shown += 1;
-        for line in describe(disk) {
-            println!("{line}");
-        }
-        if let Err(why) = refuse(disk, &running, needed(0, None)) {
-            println!("{why}");
-        }
+    Ok(blocks
+        .iter()
+        .filter_map(|block| {
+            let disk = block.disk(&running);
+            disk.listed().then(|| Listed {
+                refused: refuse(block, &running, needed(0, None)).err(),
+                disk,
+            })
+        })
+        .collect())
+}
+
+/// A whole disk opened for eclipse-flash alone. Its blocks are dropped from the page cache before it
+/// is read back, so the read back reads the disk.
+struct Exclusive(File);
+
+impl Read for Exclusive {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
     }
-    if shown == 0 {
-        println!("No stick or USB disk is plugged in.");
+}
+
+impl Write for Exclusive {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
     }
-    Ok(())
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl Seek for Exclusive {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        self.0.seek(to)
+    }
+}
+
+impl Drive for Exclusive {
+    fn sync(&mut self) -> io::Result<()> {
+        self.0.sync_data()
+    }
+
+    fn uncache(&mut self) -> io::Result<()> {
+        uncache(&self.0)
+    }
+}
+
+/// Drops what the page cache holds of a file or a disk. Only blocks that are on the disk already are
+/// dropped, so it comes after a sync.
+fn uncache(file: &File) -> io::Result<()> {
+    rustix::fs::fadvise(file, 0, None, rustix::fs::Advice::DontNeed).map_err(io::Error::from)
 }
 
 /// `sudo eclipse-flash write`: shows the image and the disk, asks for the serial and the passphrase,
@@ -241,6 +273,7 @@ fn write_without_persist(plan: &Plan, say: &mut impl FnMut(String)) -> Result<()
                 .write(true)
                 .custom_flags(exclusive)
                 .open(path)
+                .map(Exclusive)
                 .map_err(|e| format!("Could not open {} to write it: {e}", path.display()))?;
             let place = Place {
                 drive: &mut opened,
@@ -384,7 +417,34 @@ fn write_drive(plan: &Plan, passphrase: &str, say: &mut impl FnMut(String)) -> R
     )?;
     fill(&persist, &plan.models, say)?;
     persist.close()?;
-    device.release()
+    device.release()?;
+    read_back(plan, &table, say)
+}
+
+/// Reads the esp and the slot back from the drive and compares them with the image. It comes after
+/// everything else is written, so a stick that wraps around is found whatever landed on the slot.
+fn read_back(plan: &Plan, table: &Table, say: &mut impl FnMut(String)) -> Result<(), String> {
+    say(format!(
+        "Reading {} back to check it.",
+        plan.target.path().display()
+    ));
+    let image = &plan.image;
+    let mut check = image.check()?;
+    for (number, from) in [&image.esp, &image.slot.verity, &image.slot.store]
+        .into_iter()
+        .enumerate()
+    {
+        let (path, offset) = plan.target.place(table, &table.partitions[number]);
+        let mut opened = File::open(&path)
+            .and_then(|file| uncache(&file).map(|()| file))
+            .map_err(|e| format!("Could not read {} back: {e}", path.display()))?;
+        if number == 2 {
+            check.partition(from, &mut opened, (&path, offset), say)?;
+        } else {
+            check.partition(from, &mut opened, (&path, offset), &mut |_| {})?;
+        }
+    }
+    Ok(())
 }
 
 /// Empties a file target, writes the new partition table and reads it back.

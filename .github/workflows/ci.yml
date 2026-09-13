@@ -26,10 +26,32 @@ jobs:
       # the umbra crates need the compositor's system libraries, the nix job builds those
       - run: cargo clippy --workspace --exclude umbra --exclude niri-config --exclude niri-ipc --all-targets -- -D warnings
       - run: cargo test --workspace --exclude umbra --exclude niri-config --exclude niri-ipc
+      - run: cargo build --release -p eclipse-flash --bin eclipse-flash -p eclipse-flash-app --bin eclipse-flash-app
+      - name: Take a picture of the eclipse-flash app
+        # under a virtual X display. the runner has no stick, so the app lists none, and quits
+        run: |
+          sudo apt-get install -y --no-install-recommends xvfb libxkbcommon-x11-0 libxcursor1 libxrandr2 libxi6 >/dev/null
+          timeout 120 xvfb-run -a -s '-screen 0 1280x1024x24' target/release/eclipse-flash-app --screenshot flash-app-linux.png
+          test -s flash-app-linux.png
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: eclipse-flash-linux-${{ github.sha }}
+          path: |
+            target/release/eclipse-flash
+            target/release/eclipse-flash-app
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: flash-app-linux-${{ github.sha }}
+          path: flash-app-linux.png
+          retention-days: 14
 
   flash-macos:
     # eclipse-flash on a mac: clippy and the tests, then the runner's own disks refused, and a drive
-    # written onto a disk image hdiutil attaches as a disk, the way a stick is written, and into a file
+    # written onto a disk image hdiutil attaches as a disk, the way a stick is written, and into a file.
+    # the app is built, takes a picture of itself, and its own code writes a drive through the prompt
     name: eclipse-flash on macOS
     runs-on: macos-latest
     steps:
@@ -40,9 +62,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy -p libeclipse --features disk --all-targets -- -D warnings
       - run: cargo clippy -p eclipse-flash --all-targets -- -D warnings
+      - run: cargo clippy -p eclipse-flash-app --all-targets -- -D warnings
       - run: cargo test -p libeclipse --features disk
       - run: cargo test -p eclipse-flash
+      - run: cargo test -p eclipse-flash-app
       - run: cargo build --release -p eclipse-flash --bin eclipse-flash --example test-drive
+      - run: cargo build --release -p eclipse-flash-app --bin eclipse-flash-app --example elevated
       - name: Write a drive onto a disk image
         run: |
           flash=target/release/eclipse-flash
@@ -79,6 +104,9 @@ jobs:
           image=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount drive.img | awk 'NR == 1 { print $1 }')
           "$flash" list | tee list.txt
           grep -qF "$image, Disk Image, 24.0 GiB." list.txt
+          # the app with the disk image listed and selected, in a picture
+          timeout 120 target/release/eclipse-flash-app --screenshot flash-app-macos.png sample.raw.zst
+          test -s flash-app-macos.png
           refused "a wrong name" "is not the name of $image\. Nothing was written\." \
             sudo "$flash" write --serial disk99 sample.raw.zst "$image"
           sudo "$flash" write --exchange 64M --serial "${image#/dev/}" sample.raw.zst "$image"
@@ -97,16 +125,38 @@ jobs:
           "$sample" check file.img
           refused "a file written once" "is not empty" sudo "$flash" write sample.raw.zst file.img
           rm drive.img file.img
+      - name: Write a drive the way the app does
+        # the app's own code starts eclipse-flash write through the administrator prompt. it runs as
+        # root here, where the prompt asks nothing
+        timeout-minutes: 10
+        run: |
+          mkfile -n 24g elevated.img
+          image=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount elevated.img | awk 'NR == 1 { print $1 }')
+          sudo target/release/examples/elevated "$PWD/target/release/eclipse-flash" "$PWD/sample.raw.zst" "$image" "${image#/dev/}" | tee elevated.txt
+          grep -qF "$image is an Eclipse drive now" elevated.txt
+          target/release/examples/test-drive check elevated.img
+          rm elevated.img
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: eclipse-flash-macos-${{ github.sha }}
-          path: target/release/eclipse-flash
+          path: |
+            target/release/eclipse-flash
+            target/release/eclipse-flash-app
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: flash-app-macos-${{ github.sha }}
+          path: flash-app-macos.png
+          if-no-files-found: ignore
           retention-days: 14
 
   flash-windows:
     # eclipse-flash on windows: clippy and the tests, then the runner's own disks refused, and a drive
-    # written onto a VHDX diskpart attaches as a disk, the way a stick is written
+    # written onto a VHDX diskpart attaches as a disk, the way a stick is written. the app is built,
+    # takes a picture of itself, and its own code writes a drive through Start-Process -Verb RunAs
     name: eclipse-flash on Windows
     runs-on: windows-latest
     steps:
@@ -117,9 +167,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy -p libeclipse --features disk --all-targets -- -D warnings
       - run: cargo clippy -p eclipse-flash --all-targets -- -D warnings
+      - run: cargo clippy -p eclipse-flash-app --all-targets -- -D warnings
       - run: cargo test -p libeclipse --features disk
       - run: cargo test -p eclipse-flash
+      - run: cargo test -p eclipse-flash-app
       - run: cargo build --release -p eclipse-flash --bin eclipse-flash --example test-drive
+      - run: cargo build --release -p eclipse-flash-app --bin eclipse-flash-app --example elevated
       - name: Write a drive onto a virtual disk
         shell: pwsh
         run: |
@@ -159,6 +212,11 @@ jobs:
           $list = & $flash list | Out-String
           Write-Output $list
           if (-not $list.Contains("$name, Msft Virtual Disk, 24.0 GiB.")) { throw "eclipse-flash list does not show $name" }
+          # the app with the virtual disk listed and selected, in a picture. it has no console, so it is
+          # waited for
+          $app = Start-Process -FilePath 'target\release\eclipse-flash-app.exe' -ArgumentList '--screenshot', 'flash-app-windows.png', 'sample.raw.zst' -PassThru
+          if (-not $app.WaitForExit(120000)) { $app.Kill(); throw 'the app did not quit after its picture' }
+          if (-not (Test-Path 'flash-app-windows.png')) { throw "the app took no picture and ended with $($app.ExitCode)" }
           Refused 'a wrong name' 'is not the name of' @('write', '--serial', 'PhysicalDrive99', 'sample.raw.zst', $name)
           & $flash write --exchange 64M --serial "PhysicalDrive$number" sample.raw.zst $name
           if ($LASTEXITCODE -ne 0) { throw "eclipse-flash did not write $name" }
@@ -167,11 +225,46 @@ jobs:
           Get-Partition -DiskNumber $number | Format-Table -AutoSize
           "select vdisk file=`"$vhd`"`ndetach vdisk" | Set-Content detach.txt
           diskpart /s detach.txt
+      - name: Write a drive the way the app does
+        # the app's own code starts eclipse-flash write through Start-Process -Verb RunAs. the runner's
+        # account is an administrator that is not asked
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vhd = Join-Path $env:RUNNER_TEMP 'elevated.vhdx'
+          "create vdisk file=`"$vhd`" maximum=24576 type=expandable`nselect vdisk file=`"$vhd`"`nattach vdisk" | Set-Content attach.txt
+          diskpart /s attach.txt
+          if ($LASTEXITCODE -ne 0) { throw 'diskpart did not attach the virtual disk' }
+          Start-Sleep -Seconds 5
+          $number = (Get-Disk | Where-Object { [string]$_.BusType -eq 'File Backed Virtual' }).Number
+          $name = "\\.\PhysicalDrive$number"
+          $flash = (Resolve-Path 'target\release\eclipse-flash.exe').Path
+          $image = (Resolve-Path 'sample.raw.zst').Path
+          $out = & 'target\release\examples\elevated.exe' $flash $image $name "PhysicalDrive$number" | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 0) { throw "the write the app starts ended with $code" }
+          if (-not $out.Contains("$name is an Eclipse drive now")) { throw 'eclipse-flash did not say the drive is written' }
+          & 'target\release\examples\test-drive.exe' check $name
+          if ($LASTEXITCODE -ne 0) { throw "$name does not hold the drive" }
+          "select vdisk file=`"$vhd`"`ndetach vdisk" | Set-Content detach.txt
+          diskpart /s detach.txt
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: eclipse-flash-windows-${{ github.sha }}
-          path: target/release/eclipse-flash.exe
+          path: |
+            target/release/eclipse-flash.exe
+            target/release/eclipse-flash-app.exe
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: flash-app-windows-${{ github.sha }}
+          path: flash-app-windows.png
+          if-no-files-found: ignore
           retention-days: 14
 
   nix:
