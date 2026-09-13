@@ -568,9 +568,17 @@ struct Mounted {
 }
 
 impl Mounted {
-    fn new(device: &Path, path: PathBuf, options: Option<&str>) -> Result<Mounted, String> {
+    /// Mounts a file system of type `kind` that was just made. Without the type mount guesses, and
+    /// right after mkfs it can guess wrong.
+    fn new(
+        device: &Path,
+        path: PathBuf,
+        kind: &str,
+        options: Option<&str>,
+    ) -> Result<Mounted, String> {
         fs::create_dir_all(&path).map_err(|e| format!("Could not make {}: {e}", path.display()))?;
         let mut command = Command::new("mount");
+        command.args(["-t", kind]);
         if let Some(options) = options {
             command.args(["-o", options]);
         }
@@ -800,6 +808,7 @@ impl Cloner {
         let esp = Mounted::new(
             partition,
             self.run.join(format!("esp-{}", std::process::id())),
+            "vfat",
             None,
         )?;
         for file in BOOT_FILES {
@@ -841,6 +850,7 @@ impl Cloner {
         let top = Mounted::new(
             &mapper,
             self.run.join(format!("persist-{}", std::process::id())),
+            "btrfs",
             Some(PERSIST_OPTIONS),
         )?;
         self.fill(&top.path, say)?;
