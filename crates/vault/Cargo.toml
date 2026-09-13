@@ -12,6 +12,11 @@ authors.workspace = true
 name = "vault"
 path = "src/main.rs"
 
+# runs in the initrd, makes persist on a drive that has none yet
+[[bin]]
+name = "vault-first-boot"
+path = "src/first_boot.rs"
+
 [dependencies]
 # the drive layout, the guard and the steps a clone writes with, shared with eclipse-flash
 libeclipse = { workspace = true, features = ["disk"] }

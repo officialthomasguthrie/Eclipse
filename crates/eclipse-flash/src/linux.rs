@@ -3,18 +3,18 @@
 
 use std::fs::{self, OpenOptions, Permissions};
 use std::io::{self, BufRead, IsTerminal, Write};
-use std::os::unix::fs::{FileTypeExt, PermissionsExt, chown};
+use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use libeclipse::disk::run::{self, Loop, Persist, copy, copy_file, feed, on_path, settle, tool};
 use libeclipse::disk::{
-    Block, LSBLK, MACHINE_ID, OWNER, Partition, SUBVOLUMES, Table, confirmation, describe,
-    disks_in, machine_id, needed, partition_node, passphrase_problem, read_blocks, read_lsblk,
-    read_table, refuse, script, size,
+    Block, LSBLK, Partition, Table, confirmation, describe, disks_in, needed, partition_node,
+    passphrase_problem, read_blocks, read_lsblk, read_table, refuse, script, size,
 };
 
 use crate::Request;
+use crate::direct::{self, Place};
 use crate::drive::{check_file, check_table, models_in};
 use crate::image::{Image, Reader};
 
@@ -191,6 +191,18 @@ pub fn write(request: &Request) -> Result<(), String> {
         }
         (Target::File(..), None) => {}
     }
+    let unfinished = |why: String| {
+        format!(
+            "{why}\nThe drive was not finished, and {path} does not boot. Run eclipse-flash again to start over."
+        )
+    };
+    if request.first_boot {
+        write_without_persist(&plan, &mut |line| println!("{line}")).map_err(unfinished)?;
+        println!(
+            "{path} is an Eclipse drive now, with version {version}. It makes persist when it first starts, with a passphrase you choose then."
+        );
+        return Ok(());
+    }
     let passphrase = read_line("Passphrase for persist: ", true)?;
     if let Some(problem) = passphrase_problem(&passphrase) {
         return Err(format!("{problem} Nothing was written."));
@@ -198,15 +210,54 @@ pub fn write(request: &Request) -> Result<(), String> {
     if terminal && read_line("Type it again: ", true)? != passphrase {
         return Err("The two passphrases are not the same. Nothing was written.".into());
     }
-    write_drive(&plan, &passphrase, &mut |line| println!("{line}")).map_err(|why| {
-        format!(
-            "{why}\nThe drive was not finished, and {path} does not boot. Run eclipse-flash again to start over."
-        )
-    })?;
+    write_drive(&plan, &passphrase, &mut |line| println!("{line}")).map_err(unfinished)?;
     println!(
         "{path} is an Eclipse drive now, with version {version}. Persist opens with the passphrase you chose."
     );
     Ok(())
+}
+
+/// Writes the drive without persist, the way macOS and Windows write one, and leaves persist for the
+/// drive to make at its first boot.
+fn write_without_persist(plan: &Plan, say: &mut impl FnMut(String)) -> Result<(), String> {
+    match &plan.target {
+        Target::File(path, bytes) => {
+            let mut file = direct::empty(path, *bytes)?;
+            let place = Place {
+                drive: &mut file,
+                path,
+                bytes: *bytes,
+                sparse: true,
+            };
+            direct::write_drive(&plan.image, place, plan.exchange, say).map(|_| ())
+        }
+        Target::Disk(disk) => {
+            let path = Path::new(&disk.path);
+            // exclusive: the open fails while anything on the disk is mounted or opened
+            let exclusive = i32::try_from(rustix::fs::OFlags::EXCL.bits())
+                .map_err(|e| format!("Could not open {}: {e}", path.display()))?;
+            let mut opened = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(exclusive)
+                .open(path)
+                .map_err(|e| format!("Could not open {} to write it: {e}", path.display()))?;
+            let place = Place {
+                drive: &mut opened,
+                path,
+                bytes: disk.size,
+                sparse: false,
+            };
+            let table = direct::write_drive(&plan.image, place, plan.exchange, say)?;
+            drop(opened);
+            tool(Command::new("blockdev").arg("--rereadpt").arg(path))?;
+            settle(
+                &(1..=table.partitions.len())
+                    .map(|number| PathBuf::from(partition_node(&disk.path, number)))
+                    .collect::<Vec<_>>(),
+            )
+        }
+    }
 }
 
 /// Looks at the image and the target, and refuses them or says what will be written.
@@ -216,7 +267,7 @@ fn inspect(request: &Request) -> Result<Plan, String> {
             "{missing} is missing, and writing a drive needs it."
         ));
     }
-    if request.exchange.is_some() && !on_path("mkfs.exfat") {
+    if request.exchange.is_some() && !request.first_boot && !on_path("mkfs.exfat") {
         return Err("mkfs.exfat is missing, and the exchange partition needs it.".into());
     }
     let image = Image::open(&request.image)?;
@@ -331,7 +382,7 @@ fn write_drive(plan: &Plan, passphrase: &str, say: &mut impl FnMut(String)) -> R
         &format!("eclipse-flash-{pid}"),
         Path::new(RUN).join(format!("persist-{pid}")),
     )?;
-    fill(persist.top(), &plan.models, say)?;
+    fill(&persist, &plan.models, say)?;
     persist.close()?;
     device.release()
 }
@@ -435,37 +486,18 @@ fn copy_partition(
     copy(reader, &image.path, &path, offset, bytes, sparse, say)
 }
 
-/// Makes the subvolumes of persist at `top`, the machine id and the owner's home, and copies the
-/// models in.
-fn fill(top: &Path, models: &[PathBuf], say: &mut impl FnMut(String)) -> Result<(), String> {
-    let making = |path: &Path, e: io::Error| format!("Could not make {}: {e}", path.display());
-    for subvolume in SUBVOLUMES {
-        tool(
-            Command::new("btrfs")
-                .args(["subvolume", "create"])
-                .arg(top.join(subvolume)),
-        )?;
-    }
-    let id = top.join("@var").join(MACHINE_ID);
-    if let Some(parent) = id.parent() {
-        fs::create_dir_all(parent).map_err(|e| making(parent, e))?;
-    }
-    fs::write(&id, machine_id(run::random()?)).map_err(|e| making(&id, e))?;
-    let (owner, uid, gid) = OWNER;
-    let home = top.join("@home").join(owner);
-    fs::create_dir(&home)
-        .and_then(|()| fs::set_permissions(&home, Permissions::from_mode(0o755)))
-        .and_then(|()| chown(&home, Some(uid), Some(gid)))
-        .map_err(|e| making(&home, e))?;
+/// Makes the subvolumes of persist, the machine id and the owner's home, and copies the models in.
+fn fill(persist: &Persist, models: &[PathBuf], say: &mut impl FnMut(String)) -> Result<(), String> {
+    persist.fill()?;
     for model in models {
         let Some(name) = model.file_name() else {
             continue;
         };
         say(format!("Copying {} into models.", name.to_string_lossy()));
-        let copied = top.join("@models").join(name);
+        let copied = persist.top().join("@models").join(name);
         copy_file(model, &copied)?;
         fs::set_permissions(&copied, Permissions::from_mode(0o644))
-            .map_err(|e| making(&copied, e))?;
+            .map_err(|e: io::Error| format!("Could not make {}: {e}", copied.display()))?;
     }
     Ok(())
 }

@@ -427,19 +427,30 @@ jobs:
           python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw.zst pass.txt --models models/cache \
             --exchange 1G --log serial.log --splash splash.png --desktop desktop.png --corona \
             --updates updates.img --backup backup.img --clone clone.img --timeout 1500
+      - name: Boot a drive that makes persist at its first boot
+        # eclipse-flash leaves persist out, the way it writes a drive on macos and windows. the drive
+        # asks for a passphrase over serial, makes persist and formats its exchange partition, and the
+        # next boot opens that persist with the same passphrase
+        run: |
+          python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw.zst pass.txt --first-boot --exchange 1G \
+            --log first-boot.log --splash first-boot-splash.png --timeout 900
       - uses: actions/upload-artifact@v4
         if: always()
         continue-on-error: true
         with:
           name: boot-serial-${{ github.sha }}
-          path: serial.log
+          path: |
+            serial.log
+            first-boot.log
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
         continue-on-error: true
         with:
           name: boot-splash-${{ github.sha }}
-          path: splash.png
+          path: |
+            splash.png
+            first-boot-splash.png
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         id: screendumps
@@ -455,7 +466,7 @@ jobs:
         # log, and `gh run view --log | base64 -d` gets the png back
         if: always() && steps.screendumps.outcome == 'failure'
         run: |
-          for f in splash.png desktop*.png; do
+          for f in splash.png first-boot-splash.png desktop*.png; do
             [ -f "$f" ] || continue
             echo "::group::$f"
             base64 -w0 "$f"; echo

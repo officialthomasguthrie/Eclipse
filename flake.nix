@@ -244,23 +244,27 @@
               ];
               text = ''
                 usage() {
-                  echo "usage: eclipse-vm --image file [--persist passfile] [--models dir] [--exchange size] [qemu options]" >&2
-                  echo "  --image     the drive to boot. with --persist, the image (.raw or .raw.zst) to write onto one" >&2
-                  echo "  --persist   write the image onto a drive in a file with eclipse-flash (sudo), with the" >&2
-                  echo "              passphrase for persist in this file" >&2
-                  echo "  --models    copy the files in this directory into the models subvolume (with --persist)" >&2
-                  echo "  --exchange  give the drive an exchange partition of this size, like 1G (with --persist)" >&2
+                  echo "usage: eclipse-vm --image file [--persist passfile | --first-boot] [--models dir] [--exchange size] [qemu options]" >&2
+                  echo "  --image       the drive to boot. with --persist or --first-boot, the image (.raw or .raw.zst) to write onto one" >&2
+                  echo "  --persist     write the image onto a drive in a file with eclipse-flash (sudo), with the" >&2
+                  echo "                passphrase for persist in this file" >&2
+                  echo "  --first-boot  write the image onto a drive in a file with eclipse-flash (sudo) without persist," >&2
+                  echo "                which the drive makes when it first starts, with a passphrase typed there" >&2
+                  echo "  --models      copy the files in this directory into the models subvolume (with --persist)" >&2
+                  echo "  --exchange    give the drive an exchange partition of this size, like 1G (with --persist or --first-boot)" >&2
                   echo "  the rest goes to qemu after the defaults, so later -m, -smp, -cpu win." >&2
                   echo "  -serial and -display are only set when you pass none" >&2
                 }
                 image=""
                 persist=""
+                firstboot=""
                 models=""
                 exchange=""
                 while [ $# -gt 0 ]; do
                   case $1 in
                     --image) image=''${2:?--image needs a file}; shift 2 ;;
                     --persist) persist=''${2:?--persist needs a passfile}; shift 2 ;;
+                    --first-boot) firstboot=1; shift ;;
                     --models) models=''${2:?--models needs a directory}; shift 2 ;;
                     --exchange) exchange=''${2:?--exchange needs a size}; shift 2 ;;
                     -h|--help) usage; exit 0 ;;
@@ -270,8 +274,16 @@
                 done
                 [ -n "$image" ] || { usage; exit 1; }
                 [ -f "$image" ] || { echo "eclipse-vm: no such image: $image" >&2; exit 1; }
-                if [ -n "$models$exchange" ] && [ -z "$persist" ]; then
-                  echo "eclipse-vm: --models and --exchange go with --persist" >&2
+                if [ -n "$persist" ] && [ -n "$firstboot" ]; then
+                  echo "eclipse-vm: --persist and --first-boot do not go together" >&2
+                  exit 1
+                fi
+                if [ -n "$models" ] && [ -z "$persist" ]; then
+                  echo "eclipse-vm: --models goes with --persist" >&2
+                  exit 1
+                fi
+                if [ -n "$exchange" ] && [ -z "$persist$firstboot" ]; then
+                  echo "eclipse-vm: --exchange goes with --persist or --first-boot" >&2
                   exit 1
                 fi
                 if [ -n "$models" ] && [ ! -d "$models" ]; then
@@ -291,18 +303,24 @@
                 }
                 trap cleanup EXIT
                 trap 'exit 1' HUP INT TERM
-                if [ -n "$persist" ]; then
+                if [ -n "$persist$firstboot" ]; then
                   # a sparse file the size of a small stick. eclipse-flash reads the image where it
                   # is, so one in the store needs no copy
                   flash=(write)
+                  if [ -n "$firstboot" ]; then flash+=(--first-boot); fi
                   if [ -n "$models" ]; then flash+=(--models "$models"); fi
                   if [ -n "$exchange" ]; then flash+=(--exchange "$exchange"); fi
                   truncate -s 24G "$work/drive.img"
                   echo "eclipse-vm: writing $image onto a drive in $work with eclipse-flash, sudo may ask for your password" >&2
-                  # sudo sets a path of its own. the passfile is read as the person running this, not as
-                  # root, which is what the redirect is for
-                  # shellcheck disable=SC2024
-                  sudo "$(command -v eclipse-flash)" "''${flash[@]}" "$image" "$work/drive.img" < "$persist"
+                  if [ -n "$firstboot" ]; then
+                    # no passphrase goes in, the drive asks for one when it first starts
+                    sudo "$(command -v eclipse-flash)" "''${flash[@]}" "$image" "$work/drive.img"
+                  else
+                    # sudo sets a path of its own. the passfile is read as the person running this, not
+                    # as root, which is what the redirect is for
+                    # shellcheck disable=SC2024
+                    sudo "$(command -v eclipse-flash)" "''${flash[@]}" "$image" "$work/drive.img" < "$persist"
+                  fi
                   image=$work/drive.img
                 else
                   copy=0

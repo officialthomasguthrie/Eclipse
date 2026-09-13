@@ -32,12 +32,21 @@ fun boot_progress_cb(duration, p) {
 }
 Plymouth.SetBootProgressFunction(boot_progress_cb);
 
-# the passphrase prompt under the sun: a label and one dot per character
+# the passphrase prompt under the sun: the question and one dot per character. systemd-cryptsetup
+# asks in words of its own, which read here as a plain request. a new drive asks its own questions
 prompt.sprite = Sprite();
 dot.step = Math.Int(size / 8);
 
+fun prompt_label(text) {
+  if (!text)
+    return "Enter your passphrase";
+  if (text.SubString(0, 12) == "Please enter")
+    return "Enter your passphrase";
+  return text;
+}
+
 fun display_password_cb(prompt_text, bullet_count) {
-  label = Image.Text("Enter your passphrase", 0.8, 0.8, 0.8, 1, "Sans 11");
+  label = Image.Text(prompt_label(prompt_text), 0.8, 0.8, 0.8, 1, "Sans 11");
   prompt.sprite.SetImage(label);
   prompt.sprite.SetPosition(cx - label.GetWidth() / 2, cy + size * 0.85, 5);
   prompt.sprite.SetOpacity(1);

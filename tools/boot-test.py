@@ -4,7 +4,16 @@ runs this.
 
 Usage: boot-test.py <eclipse-vm> <image> <passfile> [--models dir] [--exchange size] [--timeout 600]
        [--log serial.log] [--splash splash.png] [--desktop desktop.png] [--corona] [--updates updates.img]
-       [--backup backup.img] [--clone clone.img]
+       [--backup backup.img] [--clone clone.img] [--first-boot]
+
+With --first-boot eclipse-flash writes the drive without persist, the way it writes one on macOS and
+Windows, and the drive makes persist when it first starts. The test answers its questions over serial: a
+passphrase that is too short and two that differ are asked for again, then the passphrase from the
+passfile goes in twice. The drive goes on to the shell without asking again, and gets the checks below
+up to the drive's own: the slots, luks2 with argon2id, the subvolumes, the owner's home and the exchange
+partition. Persist has one key slot and the system runs with the machine id in @var. After a reboot the
+drive asks systemd-cryptsetup's question, not the first boot's, and opens the same persist with the same
+passphrase: the same uuids, machine id, key slots and partitions. The test ends there.
 
 <eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It writes the image, .raw or
 .raw.zst, onto a drive in a file with eclipse-flash (through sudo), with the passphrase from the passfile
@@ -103,6 +112,9 @@ import pexpect
 # the fish prompt is user@host with colour codes in between
 PROMPT = r"eclipse(\x1b\[[0-9;]*m)*@(\x1b\[[0-9;]*m)*eclipse"
 PASSPHRASE = r"(?i)passphrase[^\r\n]*:"
+# what vault-first-boot asks on a drive written without persist
+CHOOSE = r"Choose a passphrase"
+AGAIN = r"Type the passphrase again"
 # fish marks every command line it runs: osc 133;C when it starts and 133;D;<status> when it is
 # done. it also repaints the prompt whenever the journal writes to the console, so a prompt is not
 # where a command's output ends, these marks are
@@ -527,6 +539,8 @@ def main():
     ap.add_argument("passfile")
     ap.add_argument("--models", help="directory with gguf files for the models subvolume, enables the aura check")
     ap.add_argument("--exchange", help="give the drive an exchange partition of this size, like 1G, and check it")
+    ap.add_argument("--first-boot", action="store_true", help="write the drive without persist, choose the passphrase "
+                    "at its first boot, check what it made and boot it again")
     ap.add_argument("--timeout", type=int, default=600, help="seconds for the whole test")
     ap.add_argument("--aura-timeout", type=int, default=120, help="seconds for aura to load the model")
     ap.add_argument("--answer-timeout", type=int, default=240, help="seconds for aura's answer to reach the field")
@@ -547,15 +561,21 @@ def main():
         passphrase = f.read()
 
     work = tempfile.mkdtemp(prefix="eclipse-boot-")
-    if (args.splash or args.desktop or args.updates) and not args.qmp:
+    if (args.splash or args.desktop or args.updates or args.first_boot) and not args.qmp:
         args.qmp = os.path.join(work, "qmp.sock")
 
     # the app picks kvm or tcg and the firmware. what follows its options replaces its defaults.
-    # the gpu is virtio: the firmware draws the splash on it and umbra opens it as a drm device
+    # the gpu is virtio: the firmware draws the splash on it and umbra opens it as a drm device.
+    # with --first-boot eclipse-flash leaves persist out and the drive asks for the passphrase
+    drive = ["--first-boot"] if args.first_boot else ["--persist", os.path.abspath(args.passfile)]
+    if args.models:
+        drive += ["--models", os.path.abspath(args.models)]
+    if args.exchange:
+        drive += ["--exchange", args.exchange]
     cmd = [
         os.path.abspath(args.vm),
         "--image", os.path.abspath(args.image),
-        "--persist", os.path.abspath(args.passfile),
+        *drive,
         "-smp", "2",
         "-m", args.memory,
         "-device", "virtio-vga",
@@ -564,10 +584,6 @@ def main():
         "-serial", "stdio",
         "-no-reboot",
     ]
-    if args.models:
-        cmd[5:5] = ["--models", os.path.abspath(args.models)]
-    if args.exchange:
-        cmd[5:5] = ["--exchange", args.exchange]
     if args.qmp:
         cmd += ["-qmp", f"unix:{args.qmp},server,nowait"]
     if args.updates:
@@ -634,11 +650,33 @@ def main():
             child.send(passphrase + "\r")
         ok("shell")
 
-    # 1. the luks prompt, answered over serial. a second prompt means the passphrase was refused.
-    expect([PASSPHRASE], "the luks passphrase prompt")
-    ok("passphrase prompt")
+    def choose():
+        """Answer the first boot's questions for a new passphrase: one too short, two that differ, then
+        the passphrase twice. The drive makes persist, opens it and goes on to the autologin shell
+        without asking again."""
+        child.send("short77\r")
+        expect([rf"at least 8 characters\. {CHOOSE}"], "the question again after a passphrase that is too short")
+        child.send(passphrase + "\r")
+        expect([AGAIN], "the question to type the passphrase again")
+        child.send(passphrase + "-other\r")
+        expect([rf"not the same\. {CHOOSE}"], "the question again after two passphrases that differ")
+        child.send(passphrase + "\r")
+        expect([AGAIN], "the question to type the passphrase again")
+        child.send(passphrase + "\r")
+        if expect([PROMPT, CHOOSE, PASSPHRASE], "the autologin shell after the first boot made persist") != 0:
+            fail("the first boot asked for a passphrase again after it had one")
+        ok("shell, after the first boot refused a short passphrase and two that differ and made persist")
 
-    # 1a. the splash. cryptsetup waits for us, so the screen is stable
+    # 1. the luks prompt, answered over serial. a second prompt means the passphrase was refused. a
+    # drive written with --first-boot asks for a new passphrase instead
+    if args.first_boot:
+        expect([CHOOSE], "the first boot's question for a new passphrase")
+        ok("the first boot asks for a new passphrase")
+    else:
+        expect([PASSPHRASE], "the luks passphrase prompt")
+        ok("passphrase prompt")
+
+    # 1a. the splash. whatever asks waits for us, so the screen is stable
     if args.splash:
         time.sleep(3)
         try:
@@ -652,7 +690,10 @@ def main():
             fail(f"the splash is not on screen, see {args.splash}")
         ok("splash")
 
-    unlock()
+    if args.first_boot:
+        choose()
+    else:
+        unlock()
 
     # 2. the system is ours
     child.send("eclipse --version\r")
@@ -887,8 +928,85 @@ def main():
         if not re.search(r"^TYPE=exfat\s*$", found, re.M) or not re.search(r"^LABEL=EXCHANGE\s*$", found, re.M) \
                 or not re.search(rf"^{exchange_bytes}\s*$", found, re.M):
             fail(f"the exchange partition is not an exfat of {exchange_bytes} bytes labelled EXCHANGE: {found.strip()!r}")
-    ok("eclipse-flash made persist luks2 with argon2id, every subvolume and the owner's home"
+    maker = "the first boot" if args.first_boot else "eclipse-flash"
+    ok(f"{maker} made persist luks2 with argon2id, every subvolume and the owner's home"
        + (f", and an exfat exchange partition of {args.exchange}" if args.exchange else ""))
+
+    # 2d. a drive written with --first-boot. persist has one key slot, the system runs with the machine
+    # id in @var, and vault-first-boot said what it made. the next boot asks systemd-cryptsetup's
+    # question, not the first boot's, opens the same persist with the same passphrase and makes nothing
+    if args.first_boot:
+        uuid = r"^\s*([0-9a-fA-F-]{36})\s*$"
+        machine_id = r"^\s*([0-9a-f]{32})\s*$"
+
+        def one_line(command, what, pattern):
+            status, output = run(command, what)
+            found = re.search(pattern, without_console(output), re.M)
+            if status != 0 or not found:
+                fail(f"{what}: {without_console(output).strip()!r}")
+            return found.group(1)
+
+        def made(what):
+            """What the first boot made, to compare after the next boot."""
+            _, output = run("sudo cryptsetup luksDump /dev/disk/by-partlabel/persist", f"the key slots of persist {what}")
+            found = {
+                "slots": re.findall(r"^\s+(\d+): luks2\s*$", without_console(output), re.M),
+                "luks": one_line("sudo cryptsetup luksUUID /dev/disk/by-partlabel/persist", f"the luks uuid {what}",
+                                 uuid).lower(),
+                "btrfs": one_line("sudo blkid -s UUID -o value /dev/mapper/persist", f"the btrfs uuid {what}", uuid).lower(),
+                "machine": one_line("cat /etc/machine-id", f"the machine id {what}", machine_id),
+                "partitions": [(name, label, size) for name, label, _, size in boot_drive()],
+            }
+            if args.exchange:
+                found["exchange"] = one_line("sudo blkid -s UUID -o value /dev/disk/by-partlabel/exchange",
+                                             f"the uuid of the exchange partition {what}",
+                                             r"^\s*([0-9A-F]{4}-[0-9A-F]{4})\s*$")
+            return found
+
+        def said(what):
+            _, output = run("sudo journalctl -b -o cat --no-pager -u vault-first-boot", f"what vault-first-boot said {what}")
+            printed = without_console(output)
+            print(f"\nboot-test: vault-first-boot {what}:\n{printed}", flush=True)
+            return printed
+
+        first = made("after the first boot")
+        if first["slots"] != ["0"]:
+            fail(f"persist has the key slots {first['slots']} after the first boot, expected one")
+        in_var = one_line("sudo cat /persist/@var/lib/eclipse/machine-id", "the machine id in @var", machine_id)
+        if in_var != first["machine"]:
+            fail(f"the system runs with the machine id {first['machine']}, and @var holds {in_var}")
+        printed = said("on the first boot")
+        if "Made persist on " not in printed:
+            fail("vault-first-boot did not say it made persist")
+        if args.exchange and "Formatting the exchange partition." not in printed:
+            fail("vault-first-boot did not say it formatted the exchange partition")
+        ok(f"persist on {first['partitions'][-1][0]} has one key slot, and the system runs with the machine id in @var")
+
+        try:
+            qmp(args.qmp, {"execute": "set-action", "arguments": {"reboot": "reset"}})
+        except (OSError, RuntimeError) as e:
+            fail(f"qmp set-action reboot=reset: {e}")
+        child.send("sudo systemctl reboot\r")
+        if expect([CHOOSE, PASSPHRASE], "the passphrase prompt of the second boot") == 0:
+            fail("the second boot asked for a new passphrase, it did not find the persist the first boot made")
+        ok("passphrase prompt of the second boot")
+        unlock()
+        second = made("after the second boot")
+        if second != first:
+            fail(f"the second boot does not find what the first made: {first} before, {second} after")
+        printed = said("on the second boot")
+        if "Making persist." in printed or "Formatting the exchange partition." in printed:
+            fail("vault-first-boot made something again on the second boot")
+        ok("the second boot opened the same persist with the same passphrase and made nothing new")
+
+        child.send("sudo systemctl poweroff\r")
+        try:
+            child.expect(pexpect.EOF, timeout=90)
+        except pexpect.TIMEOUT:
+            print("\nboot-test: poweroff did not end qemu, killing it", flush=True)
+            child.terminate(force=True)
+        print(f"\nboot-test: PASSED in {since()}", flush=True)
+        return
 
     # 3. syzygy: the profile it wrote into @hosts, and the same answers on the system bus.
     # fish puts a bare \r before a command's output, so these anchor on the whitespace after the

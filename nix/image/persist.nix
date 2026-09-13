@@ -1,8 +1,11 @@
 # persist: luks2 around btrfs, one subvolume per kind of personal data.
-# eclipse-flash makes it, not the image build, since it is whatever is left of the stick.
+# it is whatever is left of the stick, so the image build never makes it. eclipse-flash makes it on
+# linux; a drive written on macos or windows, or with --first-boot, makes it at its first boot.
 {
   config,
   lib,
+  pkgs,
+  self,
   ...
 }:
 let
@@ -19,12 +22,58 @@ let
     options = [ "subvol=${name}" ] ++ mountOptions;
     neededForBoot = true;
   };
+  initrdSystemd = config.boot.initrd.systemd.package;
+  firstBoot = "${self.packages.${pkgs.stdenv.hostPlatform.system}.workspace}/bin/vault-first-boot";
 in
 {
   boot.initrd.luks.devices.persist = {
     device = "/dev/disk/by-partlabel/persist";
     allowDiscards = true;
     # fido2 and tpm2 get enrolled with systemd-cryptenroll later
+  };
+
+  # vault-first-boot runs before persist is opened. on a drive without persist it asks for a
+  # passphrase on the splash, makes persist in the free space and opens it, so systemd-cryptsetup
+  # finds it open and asks nothing. it also formats an exchange partition that has no file system.
+  # the job that waits for the persist partition waits behind it, or its 90 s would run out while
+  # the passphrase is typed
+  boot.initrd.systemd = {
+    storePaths = [
+      firstBoot
+      "${initrdSystemd}/bin/systemd-ask-password"
+    ];
+    initrdBin = [ pkgs.cryptsetup ];
+    extraBin = {
+      blkid = "${pkgs.util-linux}/bin/blkid";
+      blockdev = "${pkgs.util-linux}/bin/blockdev";
+      lsblk = "${pkgs.util-linux}/bin/lsblk";
+      partx = "${pkgs.util-linux}/bin/partx";
+      sfdisk = "${pkgs.util-linux}/bin/sfdisk";
+      "mkfs.exfat" = "${pkgs.exfatprogs}/bin/mkfs.exfat";
+    };
+    services.vault-first-boot = {
+      description = "Make persist on a new drive";
+      wantedBy = [ "initrd.target" ];
+      wants = [ "cryptsetup-pre.target" ];
+      after = [
+        "systemd-udev-trigger.service"
+        "plymouth-start.service"
+        "systemd-ask-password-plymouth.path"
+        "systemd-ask-password-console.path"
+      ];
+      before = [
+        "cryptsetup-pre.target"
+        "systemd-cryptsetup@persist.service"
+        "dev-disk-by\\x2dpartlabel-persist.device"
+      ];
+      unitConfig.DefaultDependencies = false;
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = firstBoot;
+        TimeoutStartSec = "infinity";
+      };
+    };
   };
 
   fileSystems = {

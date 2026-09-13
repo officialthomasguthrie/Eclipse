@@ -208,6 +208,11 @@ impl Opened {
         self.done = true;
         tool(Command::new("cryptsetup").args(["close", &self.name])).map(|_| ())
     }
+
+    /// Leaves it open.
+    pub fn keep(mut self) {
+        self.done = true;
+    }
 }
 
 impl Drop for Opened {
@@ -320,6 +325,51 @@ impl Persist {
     #[must_use]
     pub fn top(&self) -> &Path {
         self.top.path()
+    }
+
+    /// Makes what a new persist holds: its subvolumes, a new machine id in `@var` and the owner's
+    /// home in `@home`.
+    ///
+    /// # Errors
+    ///
+    /// When btrfs fails or a file cannot be made.
+    #[cfg(unix)]
+    pub fn fill(&self) -> Result<(), String> {
+        use std::os::unix::fs::{PermissionsExt, chown};
+
+        let top = self.top();
+        let making = |path: &Path, e: io::Error| format!("Could not make {}: {e}", path.display());
+        for subvolume in super::SUBVOLUMES {
+            tool(
+                Command::new("btrfs")
+                    .args(["subvolume", "create"])
+                    .arg(top.join(subvolume)),
+            )?;
+        }
+        let id = top.join("@var").join(super::MACHINE_ID);
+        if let Some(parent) = id.parent() {
+            fs::create_dir_all(parent).map_err(|e| making(parent, e))?;
+        }
+        fs::write(&id, super::machine_id(random()?)).map_err(|e| making(&id, e))?;
+        let (owner, uid, gid) = super::OWNER;
+        let home = top.join("@home").join(owner);
+        fs::create_dir(&home)
+            .and_then(|()| fs::set_permissions(&home, fs::Permissions::from_mode(0o755)))
+            .and_then(|()| chown(&home, Some(uid), Some(gid)))
+            .map_err(|e| making(&home, e))
+    }
+
+    /// Unmounts it and leaves the volume open under its name, for the boot that made it to go on
+    /// with.
+    ///
+    /// # Errors
+    ///
+    /// When umount fails.
+    pub fn leave_open(self) -> Result<(), String> {
+        let Persist { top, opened } = self;
+        top.unmount()?;
+        opened.keep();
+        Ok(())
     }
 
     /// Unmounts and closes it.

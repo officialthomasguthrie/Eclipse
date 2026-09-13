@@ -1,8 +1,8 @@
 //! eclipse-flash: writes Eclipse onto a stick or a USB disk from a system image. `list` shows the
 //! disks it can write onto, `write` erases one and puts the system and an empty slot for the next
-//! update onto it. On Linux it makes the encrypted persist too; a drive written on macOS or Windows
-//! makes persist at its first boot. It refuses a disk inside the computer, the disk the running
-//! system is on, and a disk that is in use.
+//! update onto it. On Linux it makes the encrypted persist too, unless it is asked to leave persist
+//! to the drive; a drive written on macOS or Windows makes persist at its first boot. It refuses a
+//! disk inside the computer, the disk the running system is on, and a disk that is in use.
 
 mod direct;
 mod drive;
@@ -21,16 +21,17 @@ use std::process::ExitCode;
 
 #[cfg(target_os = "linux")]
 const USAGE: &str = "Usage: eclipse-flash list
-       sudo eclipse-flash write [--exchange <size>] [--models <folder>] [--serial <serial>] <image> <disk>";
+       sudo eclipse-flash write [--exchange <size>] [--models <folder> | --first-boot] [--serial <serial>] <image> <disk>";
 
 #[cfg(target_os = "linux")]
 const HELP: &str = "Writes Eclipse onto a stick or a USB disk: the system in the image, an empty slot \
-for the next update, and persist, encrypted with a passphrase you choose. Everything on the disk is \
-erased, so eclipse-flash shows the disk first and asks you to type its serial. It refuses a disk \
-inside the computer, the disk this system runs from, and a disk that is in use. The image is a .raw \
-or .raw.zst file. For a virtual machine the disk can be an empty file instead, made with truncate -s \
-24G <file>. Without a terminal, give the serial with --serial and the passphrase on one line of \
-input.
+for the next update, and persist, encrypted with a passphrase you choose. With --first-boot persist is \
+left out, and the drive makes it when it first starts, with a passphrase typed on its own screen. \
+Everything on the disk is erased, so eclipse-flash shows the disk first and asks you to type its \
+serial. It refuses a disk inside the computer, the disk this system runs from, and a disk that is in \
+use. The image is a .raw or .raw.zst file. For a virtual machine the disk can be an empty file \
+instead, made with truncate -s 24G <file>. Without a terminal, give the serial with --serial and the \
+passphrase on one line of input.
 
 Commands:
   list               Show the sticks and USB disks that are plugged in
@@ -39,6 +40,7 @@ Commands:
 Options for write:
   --exchange <size>  Add a partition of this size that Windows and macOS can read, like 8G
   --models <folder>  Copy the model files in this folder onto the drive
+  --first-boot       Leave persist for the drive to make when it first starts
   --serial <serial>  The disk's serial, given instead of typed";
 
 #[cfg(target_os = "macos")]
@@ -96,6 +98,9 @@ pub struct Request {
     pub exchange: Option<u64>,
     /// A folder of models to copy into `@models`.
     pub models: Option<PathBuf>,
+    /// Whether persist is left for the drive to make at its first boot. On macOS and Windows it
+    /// always is.
+    pub first_boot: bool,
     /// The disk's serial, given instead of typed.
     pub serial: Option<String>,
 }
@@ -199,6 +204,7 @@ fn parse(args: &[String]) -> Result<Command, String> {
     }
     let mut exchange = None;
     let mut models = None;
+    let mut first_boot = false;
     let mut serial = None;
     let mut paths = Vec::new();
     while let Some(arg) = words.next() {
@@ -206,10 +212,16 @@ fn parse(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--exchange" => exchange = drive::exchange_size(value(&mut words, "--exchange")?)?,
             "--models" => models = Some(PathBuf::from(value(&mut words, "--models")?)),
+            "--first-boot" => first_boot = true,
             "--serial" => serial = Some(value(&mut words, "--serial")?.to_string()),
             flag if flag.starts_with('-') => return Err(format!("unknown argument `{flag}`")),
             _ => paths.push(PathBuf::from(arg)),
         }
+    }
+    if first_boot && models.is_some() {
+        return Err(
+            "--models and --first-boot do not go together, models are copied into persist".into(),
+        );
     }
     let [image, target]: [PathBuf; 2] = paths.try_into().map_err(|paths: Vec<PathBuf>| {
         format!(
@@ -222,6 +234,7 @@ fn parse(args: &[String]) -> Result<Command, String> {
         target,
         exchange,
         models,
+        first_boot,
         serial,
     }))
 }
@@ -250,6 +263,7 @@ mod tests {
                 target: "/dev/sdb".into(),
                 exchange: None,
                 models: None,
+                first_boot: false,
                 serial: None,
             }))
         );
@@ -270,7 +284,19 @@ mod tests {
                 target: "/dev/disk/by-id/usb-Stick".into(),
                 exchange: Some(8 << 30),
                 models: Some("models".into()),
+                first_boot: false,
                 serial: Some("4C53".into()),
+            }))
+        );
+        assert_eq!(
+            parsed(&["write", "--first-boot", "eclipse.raw", "drive.img"]),
+            Ok(Command::Write(Request {
+                image: "eclipse.raw".into(),
+                target: "drive.img".into(),
+                exchange: None,
+                models: None,
+                first_boot: true,
+                serial: None,
             }))
         );
         assert_eq!(parsed(&["list"]), Ok(Command::List));
@@ -287,6 +313,17 @@ mod tests {
         assert!(parsed(&["write", "--serial"]).is_err());
         assert!(parsed(&["write", "--exchange", "8", "a.raw", "/dev/sdb"]).is_err());
         assert!(parsed(&["write", "--yes", "a.raw", "/dev/sdb"]).is_err());
+        assert!(
+            parsed(&[
+                "write",
+                "--first-boot",
+                "--models",
+                "models",
+                "a.raw",
+                "/dev/sdb"
+            ])
+            .is_err()
+        );
         assert!(parsed(&["list", "/dev/sdb"]).is_err());
         assert!(parsed(&["erase"]).is_err());
     }

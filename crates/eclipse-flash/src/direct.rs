@@ -228,7 +228,11 @@ fn confirm(
 }
 
 /// A file cut to nothing and back to its size, so it reads as zeros, which the copies skip.
-fn empty(path: &Path, bytes: u64) -> Result<File, String> {
+///
+/// # Errors
+///
+/// When the file cannot be opened or cut.
+pub fn empty(path: &Path, bytes: u64) -> Result<File, String> {
     OpenOptions::new()
         .read(true)
         .write(true)
@@ -562,6 +566,7 @@ mod tests {
             target: target.into(),
             exchange: None,
             models: None,
+            first_boot: false,
             serial: None,
         }
     }
