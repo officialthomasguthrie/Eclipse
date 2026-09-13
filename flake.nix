@@ -103,6 +103,33 @@
               doCheck = false;
             }
           );
+          # eclipse-flash by itself, and on linux with the programs it runs. it needs none of the
+          # desktop's libraries, so the vm app gets it in minutes without the rest of the workspace
+          flashCommon = {
+            inherit src;
+            strictDeps = true;
+            pname = "eclipse-flash";
+            version = "0.1.0";
+            cargoExtraArgs = "-p eclipse-flash";
+          };
+          eclipseFlash = craneLib.buildPackage (
+            flashCommon
+            // {
+              cargoArtifacts = craneLib.buildDepsOnly flashCommon;
+              doCheck = false;
+              nativeBuildInputs = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.makeWrapper ];
+              postInstall = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+                wrapProgram $out/bin/eclipse-flash --prefix PATH : ${
+                  lib.makeBinPath [
+                    pkgs.util-linux
+                    pkgs.cryptsetup
+                    pkgs.btrfs-progs
+                    pkgs.exfatprogs
+                  ]
+                }
+              '';
+            }
+          );
           # umbra reads shaders, a cursor image and its default config from next to the sources,
           # the cargo source filter alone would drop them
           umbraSrc = lib.cleanSourceWith {
@@ -196,6 +223,7 @@
           packages = {
             default = workspace;
             inherit workspace;
+            eclipse-flash = eclipseFlash;
           }
           // lib.optionalAttrs pkgs.stdenv.isLinux { inherit umbra; }
           // lib.optionalAttrs isImageHost {
@@ -204,35 +232,37 @@
             update = import ./nix/image/update.nix { inherit (next) config pkgs; };
             # and the version after it, which is never marked good
             broken-update = import ./nix/image/update.nix { inherit (broken) config pkgs; };
-            # boots a raw image in qemu. `nix run .#vm` hands it the image above, the boot test builds
-            # this package and hands it the image from the artifact. the drive is nvme, not an emulated
-            # usb stick: qemu's usb storage returns bad blocks now and then and verity refuses them.
+            # boots a drive in qemu. `nix run .#vm` hands it the image above, which eclipse-flash first
+            # writes onto a drive in a file the way it writes a stick; the boot test does the same with
+            # the image from the image job. the drive is nvme, not an emulated usb stick: qemu's usb
+            # storage returns bad blocks now and then and verity refuses them.
             vm = pkgs.writeShellApplication {
               name = "eclipse-vm";
-              runtimeInputs = with pkgs; [
-                qemu_kvm
-                gptfdisk
-                cryptsetup
-                btrfs-progs
-                util-linux
+              runtimeInputs = [
+                pkgs.qemu_kvm
+                eclipseFlash
               ];
               text = ''
                 usage() {
-                  echo "usage: eclipse-vm [--image file.raw] [--persist passfile] [--models dir] [qemu options]" >&2
-                  echo "  --image    the raw image to boot. a read-only file is copied first" >&2
-                  echo "  --persist  add the persist partition with the passphrase in this file (sudo)" >&2
-                  echo "  --models   copy the files in this directory into the models subvolume (with --persist)" >&2
+                  echo "usage: eclipse-vm --image file [--persist passfile] [--models dir] [--exchange size] [qemu options]" >&2
+                  echo "  --image     the drive to boot. with --persist, the image (.raw or .raw.zst) to write onto one" >&2
+                  echo "  --persist   write the image onto a drive in a file with eclipse-flash (sudo), with the" >&2
+                  echo "              passphrase for persist in this file" >&2
+                  echo "  --models    copy the files in this directory into the models subvolume (with --persist)" >&2
+                  echo "  --exchange  give the drive an exchange partition of this size, like 1G (with --persist)" >&2
                   echo "  the rest goes to qemu after the defaults, so later -m, -smp, -cpu win." >&2
                   echo "  -serial and -display are only set when you pass none" >&2
                 }
                 image=""
                 persist=""
                 models=""
+                exchange=""
                 while [ $# -gt 0 ]; do
                   case $1 in
                     --image) image=''${2:?--image needs a file}; shift 2 ;;
                     --persist) persist=''${2:?--persist needs a passfile}; shift 2 ;;
                     --models) models=''${2:?--models needs a directory}; shift 2 ;;
+                    --exchange) exchange=''${2:?--exchange needs a size}; shift 2 ;;
                     -h|--help) usage; exit 0 ;;
                     --) shift; break ;;
                     *) break ;;
@@ -240,14 +270,18 @@
                 done
                 [ -n "$image" ] || { usage; exit 1; }
                 [ -f "$image" ] || { echo "eclipse-vm: no such image: $image" >&2; exit 1; }
-                if [ -n "$models" ]; then
-                  [ -n "$persist" ] || { echo "eclipse-vm: --models needs --persist" >&2; exit 1; }
-                  [ -d "$models" ] || { echo "eclipse-vm: no such directory: $models" >&2; exit 1; }
+                if [ -n "$models$exchange" ] && [ -z "$persist" ]; then
+                  echo "eclipse-vm: --models and --exchange go with --persist" >&2
+                  exit 1
+                fi
+                if [ -n "$models" ] && [ ! -d "$models" ]; then
+                  echo "eclipse-vm: no such directory: $models" >&2
+                  exit 1
                 fi
 
                 work=$(mktemp -d -t eclipse-vm.XXXXXX)
                 qemu=""
-                # qemu runs as a child so the copy goes away when it ends or when we are killed
+                # qemu runs as a child so the drive goes away when it ends or when we are killed
                 cleanup() {
                   if [ -n "$qemu" ]; then
                     kill "$qemu" 2>/dev/null || true
@@ -257,26 +291,32 @@
                 }
                 trap cleanup EXIT
                 trap 'exit 1' HUP INT TERM
-                copy=0
-                case $image in /nix/store/*) copy=1 ;; esac
-                if [ ! -w "$image" ]; then copy=1; fi
-                if [ $copy = 1 ]; then
-                  echo "eclipse-vm: $image is read-only, copying it to $work" >&2
-                  cp --reflink=auto "$image" "$work/eclipse.raw"
-                  chmod u+w "$work/eclipse.raw"
-                  image=$work/eclipse.raw
+                if [ -n "$persist" ]; then
+                  # a sparse file the size of a small stick. eclipse-flash reads the image where it
+                  # is, so one in the store needs no copy
+                  flash=(write)
+                  if [ -n "$models" ]; then flash+=(--models "$models"); fi
+                  if [ -n "$exchange" ]; then flash+=(--exchange "$exchange"); fi
+                  truncate -s 24G "$work/drive.img"
+                  echo "eclipse-vm: writing $image onto a drive in $work with eclipse-flash, sudo may ask for your password" >&2
+                  # sudo sets a path of its own. the passfile is read as the person running this, not as
+                  # root, which is what the redirect is for
+                  # shellcheck disable=SC2024
+                  sudo "$(command -v eclipse-flash)" "''${flash[@]}" "$image" "$work/drive.img" < "$persist"
+                  image=$work/drive.img
+                else
+                  copy=0
+                  case $image in /nix/store/*) copy=1 ;; esac
+                  if [ ! -w "$image" ]; then copy=1; fi
+                  if [ $copy = 1 ]; then
+                    echo "eclipse-vm: $image is read-only, copying it to $work" >&2
+                    cp --reflink=auto "$image" "$work/drive.img"
+                    chmod u+w "$work/drive.img"
+                    image=$work/drive.img
+                  fi
                 fi
                 cp ${pkgs.OVMF.fd}/FV/OVMF_VARS.fd "$work/vars.fd"
                 chmod u+w "$work/vars.fd"
-
-                if [ -n "$persist" ]; then
-                  echo "eclipse-vm: adding the persist partition through a loop device, sudo may ask for your password" >&2
-                  if [ -n "$models" ]; then
-                    sudo env PATH="$PATH" ${./tools}/persist-image.sh --models "$models" "$image" "$persist"
-                  else
-                    sudo env PATH="$PATH" ${./tools}/persist-image.sh "$image" "$persist"
-                  fi
-                fi
 
                 args=(-machine q35 -smp 4 -m 4096)
                 if [ -w /dev/kvm ]; then

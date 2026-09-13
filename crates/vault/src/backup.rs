@@ -15,6 +15,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use libeclipse::disk::run::tool;
 use serde::{Deserialize, Serialize};
 
 use crate::restore::{self, Account, Outcome, Problem, Source};
@@ -662,22 +663,6 @@ fn rustic(args: &[OsString]) -> Result<String, String> {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     } else {
         Err(message(&String::from_utf8_lossy(&output.stderr)))
-    }
-}
-
-/// Runs a program that has to succeed and returns what it printed.
-pub fn tool(command: &mut Command) -> Result<String, String> {
-    let line = format!("{command:?}");
-    let output = command
-        .output()
-        .map_err(|e| format!("Could not run {line}: {e}"))?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        Err(format!(
-            "{line} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
     }
 }
 

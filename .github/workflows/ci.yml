@@ -161,8 +161,8 @@ jobs:
           retention-days: 14
 
   boot:
-    # the image runs here through the flake's vm app: persist partition through a loop device, qemu
-    # with kvm, everything over serial
+    # the image runs here through the flake's vm app: eclipse-flash writes it onto a drive in a file,
+    # qemu boots that with kvm, everything over serial
     name: Boot test
     runs-on: ubuntu-latest
     needs: image
@@ -184,12 +184,14 @@ jobs:
           key: image-${{ github.sha }}
           fail-on-cache-miss: true
       - uses: DeterminateSystems/determinate-nix-action@v3
-      - name: Build the vm app
-        run: nix build .#vm -o vm -L
-      - name: Install pexpect and zstd
+      - name: Build the vm app and eclipse-flash
+        run: |
+          nix build .#vm -o vm -L
+          nix build .#eclipse-flash -o flash -L
+      - name: Install pexpect
         run: |
           sudo apt-get update >/dev/null
-          sudo apt-get install -y --no-install-recommends python3-pexpect zstd >/dev/null
+          sudo apt-get install -y --no-install-recommends python3-pexpect >/dev/null
       - name: Open kvm to the runner
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; ls -l /dev/kvm; else echo "no /dev/kvm, qemu will use tcg"; fi
@@ -215,12 +217,52 @@ jobs:
         run: curl -fL --retry 3 --create-dirs -o "models/cache/${{ steps.model.outputs.file }}" "${{ steps.model.outputs.url }}"
       - name: Check the test model
         run: echo "${{ steps.model.outputs.sha256 }}  models/cache/${{ steps.model.outputs.file }}" | sha256sum -c
+      - name: Check what eclipse-flash refuses
+        # it runs as root here, and every disk of the runner is inside it. a loop device, each of the
+        # runner's disks, a file that holds something and a file that is too small are refused, and
+        # nothing is written to any of them. the image is read and checked each time
+        run: |
+          refused() {
+            what=$1 words=$2 target=$3
+            if out=$(printf 'eclipse-test\n' | sudo flash/bin/eclipse-flash write eclipse.raw.zst "$target" 2>&1); then
+              echo "$out"
+              echo "::error::eclipse-flash wrote onto $what"
+              exit 1
+            fi
+            echo "$what: $out"
+            if ! grep -qE -- "$words" <<<"$out"; then
+              echo "::error::eclipse-flash did not refuse $what with: $words"
+              exit 1
+            fi
+          }
+          flash/bin/eclipse-flash list
+          truncate -s 32G loop.img
+          loop=$(sudo losetup --find --show loop.img)
+          refused "a loop device" "is not a whole disk\." "$loop"
+          sudo losetup --detach "$loop"
+          cmp -n 1048576 loop.img /dev/zero
+          running=0
+          for disk in $(lsblk --nodeps --noheadings --paths --output NAME,TYPE | awk '$2 == "disk" { print $1 }'); do
+            before=$(sudo sfdisk --dump "$disk" 2>&1 || true)
+            refused "the runner's disk $disk" "is the drive this system runs from\.|is neither removable nor on USB\." "$disk"
+            if grep -qF "is the drive this system runs from." <<<"$out"; then running=1; fi
+            if [ "$(sudo sfdisk --dump "$disk" 2>&1 || true)" != "$before" ]; then
+              echo "::error::the partition table of $disk changed"
+              exit 1
+            fi
+          done
+          if [ "$running" != 1 ]; then
+            echo "::error::eclipse-flash did not find the disk the runner runs from"
+            exit 1
+          fi
+          printf 'something' > used.img
+          truncate -s 32G used.img
+          refused "a file that holds something" "is not empty, and eclipse-flash only writes into an empty file\." used.img
+          truncate -s 8G small.img
+          refused "a file that is too small" "holds 8\.0 GiB, and Eclipse needs 21\.1 GiB\." small.img
+          rm loop.img used.img small.img
       - name: Boot
         run: |
-          zstd -d --rm eclipse.raw.zst -o eclipse.raw
-          # zstd keeps the mode of what it compressed, and that was a store file at 444. the vm
-          # app copies a read-only image and a second 5.7G does not fit on the runner
-          chmod u+w eclipse.raw
           # the update files go on a drive of their own, persist has no room for them. the test
           # mounts each version's directory where systemd-sysupdate looks for updates
           truncate -s "$(($(du -sm updates | cut -f1) + 512))M" updates.img
@@ -230,13 +272,14 @@ jobs:
           truncate -s 256M backup.img
           mkfs.ext4 -q -F -L backup backup.img
           # the disk the clone goes onto. sparse, the clone fills about 7G of it, and the runner has
-          # more than 80G free
-          truncate -s 24G clone.img
+          # more than 80G free. the first drive has an exchange partition, so the clone gets one too
+          truncate -s 26G clone.img
           df -h .
           printf 'eclipse-test' > pass.txt
-          python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw pass.txt --models models/cache \
-            --log serial.log --splash splash.png --desktop desktop.png --corona --updates updates.img \
-            --backup backup.img --clone clone.img --timeout 1500
+          # the vm app writes the image onto a drive in a file with eclipse-flash and boots that
+          python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw.zst pass.txt --models models/cache \
+            --exchange 1G --log serial.log --splash splash.png --desktop desktop.png --corona \
+            --updates updates.img --backup backup.img --clone clone.img --timeout 1500
       - uses: actions/upload-artifact@v4
         if: always()
         continue-on-error: true

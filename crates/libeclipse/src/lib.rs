@@ -1,11 +1,14 @@
 //! Names, D-Bus addresses and paths shared by every Eclipse component, the OS commands Corona and
-//! the eclipse command run, and the client side of the services on the system bus.
+//! the eclipse command run, the client side of the services on the system bus, and how a drive is
+//! written.
 //!
 //! Apache-2.0 so other people can embed it. Keep it dependency free: only the `bus` feature,
-//! which the asking side of the bus turns on, brings in zbus.
+//! which the asking side of the bus turns on, brings in zbus, and only the `disk` feature serde.
 
 pub mod aura;
 pub mod bus;
+#[cfg(feature = "disk")]
+pub mod disk;
 pub mod os;
 pub mod syzygy;
 pub mod vault;

@@ -2,13 +2,13 @@
 """Boots an image through the flake's vm app and checks that the system comes up. The boot job in ci
 runs this.
 
-Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeout 600] [--log serial.log]
-       [--splash splash.png] [--desktop desktop.png] [--corona] [--updates updates.img] [--backup backup.img]
-       [--clone clone.img]
+Usage: boot-test.py <eclipse-vm> <image> <passfile> [--models dir] [--exchange size] [--timeout 600]
+       [--log serial.log] [--splash splash.png] [--desktop desktop.png] [--corona] [--updates updates.img]
+       [--backup backup.img] [--clone clone.img]
 
-<eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds slot b and the
-persist partition to the image with the passphrase from the passfile (persist-image.sh, through sudo),
-then boots the image as an nvme drive. Everything goes through the serial console: the luks prompt,
+<eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It writes the image, .raw or
+.raw.zst, onto a drive in a file with eclipse-flash (through sudo), with the passphrase from the passfile
+for persist, then boots the drive as an nvme drive. Everything goes through the serial console: the luks prompt,
 the autologin shell, a few commands, the default apps on the path, the a/b slots, the host profile
 syzygy wrote and what `eclipse host` and `eclipse doctor` print. The serial output is printed as it
 arrives and kept in the log file.
@@ -37,6 +37,11 @@ data reads as no file system, so the two volume keys differ. After the poweroff 
 only the clone. Its luks prompt refuses the first drive's passphrase and takes the clone's, the file is
 in home, and the clone boots the version it was made from, from its own esp and slot a, with a machine
 id of its own and none of the first drive's snapshots.
+
+The drive: the vm app writes it from the image into a sparse file with eclipse-flash, with an exchange
+partition when --exchange gives its size. Persist has to be luks2 with argon2id, the settings a person
+gets, with every subvolume and the owner's home, and the exchange partition an exfat labelled EXCHANGE
+of that size. A clone of the drive gets an exchange partition of the same size.
 
 The slots: systemd-boot started the uki with a boot counter in its name, the boot reached
 boot-complete.target and the counter is gone, systemd-sysupdate lists the running version as
@@ -518,9 +523,10 @@ class Tee:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("vm", help="the eclipse-vm program from nix build .#vm")
-    ap.add_argument("image", help="a raw image without a persist partition yet")
+    ap.add_argument("image", help="the image, .raw or .raw.zst, that eclipse-flash writes onto the drive the vm boots")
     ap.add_argument("passfile")
     ap.add_argument("--models", help="directory with gguf files for the models subvolume, enables the aura check")
+    ap.add_argument("--exchange", help="give the drive an exchange partition of this size, like 1G, and check it")
     ap.add_argument("--timeout", type=int, default=600, help="seconds for the whole test")
     ap.add_argument("--aura-timeout", type=int, default=120, help="seconds for aura to load the model")
     ap.add_argument("--answer-timeout", type=int, default=240, help="seconds for aura's answer to reach the field")
@@ -560,6 +566,8 @@ def main():
     ]
     if args.models:
         cmd[5:5] = ["--models", os.path.abspath(args.models)]
+    if args.exchange:
+        cmd[5:5] = ["--exchange", args.exchange]
     if args.qmp:
         cmd += ["-qmp", f"unix:{args.qmp},server,nowait"]
     if args.updates:
@@ -794,7 +802,8 @@ def main():
             fail(f"systemd-sysupdate lists {without_console(output).strip()[-600:]!r}, expected {installed[-1]} current "
                  f"and {', '.join(installed)} installed")
 
-        # esp, slot a, slot b in partition order, then persist
+        # esp, slot a, slot b in partition order, then the exchange partition when the drive has one,
+        # and persist
         parts = boot_drive()
         gib = 1024**3
         wanted = [("esp", ESP_TYPE, gib)]
@@ -803,8 +812,9 @@ def main():
                 (f"store-verity_{held}" if held else "_empty", USR_VERITY_TYPE, gib),
                 (f"store_{held}" if held else "_empty", USR_TYPE, 8 * gib),
             ]
-        if [p[1:] for p in parts[:5]] != wanted or len(parts) < 6 or parts[5][1] != "persist":
-            fail(f"the boot drive's partitions are {[p[1:] for p in parts]}, expected {wanted} and then persist")
+        tail = (["exchange"] if args.exchange else []) + ["persist"]
+        if [p[1:] for p in parts[:5]] != wanted or [p[1] for p in parts[5:]] != tail:
+            fail(f"the boot drive's partitions are {[p[1:] for p in parts]}, expected {wanted} and then {', '.join(tail)}")
 
         store = parts[2 if slot == "a" else 4][0]
         usr_from(slot, store)
@@ -851,6 +861,34 @@ def main():
            f"/usr runs from slot a on {parts[2][0]}")
 
     running = check_slots()
+
+    # 2c. the drive eclipse-flash wrote. persist is luks2 with argon2id, the settings a person gets, and
+    # its btrfs has every subvolume and the owner's home. with --exchange the exchange partition is an
+    # exfat labelled EXCHANGE, as big as asked
+    _, output = run("sudo cryptsetup luksDump /dev/disk/by-partlabel/persist", "the luks header of persist")
+    dump = without_console(output)
+    if not re.search(r"^Version:\s*2\s*$", dump, re.M) or not re.search(r"PBKDF:\s*argon2id\s*$", dump, re.M):
+        fail(f"persist is not luks2 with argon2id: {dump.strip()[-600:]!r}")
+    _, output = run("sudo btrfs subvolume list /persist", "the subvolumes of persist")
+    found = re.findall(r"\spath (@\w+)\s*$", without_console(output), re.M)
+    missing = [name for name in ("@home", "@var", "@flatpak", "@models", "@hosts", "@snapshots") if name not in found]
+    if missing:
+        fail(f"persist has no {', '.join(missing)}: {without_console(output).strip()!r}")
+    _, output = run("stat -c home=%U:%G /home/eclipse", "the owner's home")
+    if "home=eclipse:users" not in output:
+        fail(f"/home/eclipse is not the owner's: {without_console(output).strip()!r}")
+    exchange_bytes = None
+    if args.exchange:
+        unit = {"G": 1024**3, "M": 1024**2}[args.exchange[-1].upper()]
+        exchange_bytes = int(args.exchange[:-1]) * unit
+        _, output = run("sudo blkid -p -o export /dev/disk/by-partlabel/exchange; and sudo blockdev --getsize64 "
+                        "/dev/disk/by-partlabel/exchange", "the exchange partition")
+        found = without_console(output)
+        if not re.search(r"^TYPE=exfat\s*$", found, re.M) or not re.search(r"^LABEL=EXCHANGE\s*$", found, re.M) \
+                or not re.search(rf"^{exchange_bytes}\s*$", found, re.M):
+            fail(f"the exchange partition is not an exfat of {exchange_bytes} bytes labelled EXCHANGE: {found.strip()!r}")
+    ok("eclipse-flash made persist luks2 with argon2id, every subvolume and the owner's home"
+       + (f", and an exfat exchange partition of {args.exchange}" if args.exchange else ""))
 
     # 3. syzygy: the profile it wrote into @hosts, and the same answers on the system bus.
     # fish puts a bare \r before a command's output, so these anchor on the whitespace after the
@@ -1737,13 +1775,21 @@ def main():
         wanted = [("esp", ESP_TYPE, sectors), (f"store-verity_{cloned}", USR_VERITY_TYPE, sectors),
                   (f"store_{cloned}", USR_TYPE, 8 * sectors), ("_empty", USR_VERITY_TYPE, sectors),
                   ("_empty", USR_TYPE, 8 * sectors)]
+        tail = (["exchange"] if args.exchange else []) + ["persist"]
         if [(name, kind.lower(), int(size)) for _, size, kind, _, name in table[:5]] != wanted \
-                or len(table) != 6 or table[5][4] != "persist":
-            fail(f"the clone's partitions are {table}, expected {wanted} and then persist")
+                or [row[4] for row in table[5:]] != tail:
+            fail(f"the clone's partitions are {table}, expected {wanted} and then {', '.join(tail)}")
         if (table[1][3].lower(), table[2][3].lower()) != (verity_uuid, store_uuid):
             fail(f"the clone's slot a has the uuids {table[1][3]} and {table[2][3]}, the running slot "
                  f"{verity_uuid} and {store_uuid}")
-        clone_verity, clone_store, clone_persist = table[1][0], table[2][0], table[5][0]
+        clone_verity, clone_store, clone_persist = table[1][0], table[2][0], table[-1][0]
+        if args.exchange:
+            # as big as the first drive's, and an empty exfat of its own
+            _, output = run(f"sudo blkid -p -o export {table[5][0]}", "the clone's exchange partition")
+            found = without_console(output)
+            if int(table[5][1]) * 512 != exchange_bytes or not re.search(r"^TYPE=exfat\s*$", found, re.M) \
+                    or not re.search(r"^LABEL=EXCHANGE\s*$", found, re.M):
+                fail(f"the clone's exchange partition is not an exfat of {exchange_bytes} bytes: {found.strip()!r}")
         status, output = run(f"sudo veritysetup verify {clone_store} {clone_verity} {usrhash}",
                              "the clone's store against its verity tree")
         if status != 0:

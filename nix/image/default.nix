@@ -2,7 +2,7 @@
 #
 # the image is slot a of the a/b layout: the esp with systemd-boot and a uki that counts its boots,
 # the store's verity partition and the store. writing it to a drive adds slot b and persist behind it
-# (tools/add-slot-b.sh). ab-sysupdate.nix is the running side
+# (eclipse-flash). ab-sysupdate.nix is the running side
 {
   config,
   lib,

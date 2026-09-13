@@ -1,4 +1,4 @@
-# the running side of the a/b slots. default.nix lays out slot a, tools/add-slot-b.sh adds slot b.
+# the running side of the a/b slots. default.nix lays out slot a, eclipse-flash adds slot b.
 #
 # systemd-boot takes a try off a uki's counter each time it starts it, and systemd-bless-boot drops
 # the counter once boot-complete.target is reached. a uki with no tries left sorts behind the others,

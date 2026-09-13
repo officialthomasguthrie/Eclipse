@@ -1,5 +1,5 @@
 # persist: luks2 around btrfs, one subvolume per kind of personal data.
-# the flasher creates it (tools/flash.sh for now), not the image build, since it's whatever is left of the stick.
+# eclipse-flash makes it, not the image build, since it is whatever is left of the stick.
 {
   config,
   lib,

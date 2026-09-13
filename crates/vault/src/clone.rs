@@ -6,39 +6,23 @@
 //! new too: LUKS2 with a volume key of its own around a new btrfs, and every subvolume but the
 //! snapshots is sent into it from a read-only snapshot of this drive's. Vault only writes onto a
 //! whole disk that is removable or on USB, that nothing uses, and that the running system is not on.
+//! The layout, the guard and the steps that write a drive are libeclipse's, eclipse-flash uses them
+//! too.
 
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::fs::{self, File};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
-use serde::Deserialize;
+use libeclipse::disk::run::{self, Mounted, Persist, copy, copy_file, feed, on_path, settle, tool};
+pub use libeclipse::disk::{Block, confirmation, describe, passphrase_problem};
+use libeclipse::disk::{
+    LSBLK, MACHINE_ID, STORE_SIZE, Slot, Table, VERITY_SIZE, disks_in, machine_id, needed,
+    partition_node, read_lsblk, read_table, refuse, script, size,
+};
 
-use crate::backup::tool;
 use crate::timeline;
-
-const MIB: u64 = 1 << 20;
-const GIB: u64 = 1 << 30;
-/// The sizes of the esp and of each slot's two partitions, the same as on a drive the flasher writes.
-const ESP_SIZE: u64 = GIB;
-const VERITY_SIZE: u64 = GIB;
-const STORE_SIZE: u64 = 8 * GIB;
-/// Alignment and the two copies of the partition table.
-const SLACK: u64 = 64 * MIB;
-/// Room for what persist holds now to grow into, and the least persist gets.
-const HEADROOM: u64 = GIB;
-const LEAST_PERSIST: u64 = 2 * GIB;
-/// How much of a partition is copied at a time.
-const CHUNK: usize = 4 << 20;
-
-/// GPT partition types from the discoverable partitions specification, the way sfdisk prints them.
-const ESP_TYPE: &str = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B";
-const USR_TYPE: &str = "8484680C-9521-48C6-9C11-B0720656F69E";
-const USR_VERITY_TYPE: &str = "77FF5F63-E7B6-4633-ACF4-1565B864C0E6";
-const LINUX_TYPE: &str = "0FC63DAF-8483-4772-8E79-3D69D8477DE4";
-const BASIC_DATA_TYPE: &str = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7";
 
 /// The subvolumes a clone gets a copy of. `@snapshots` is made new and empty.
 pub const SUBVOLUMES: [&str; 5] = ["@home", "@var", "@flatpak", "@models", "@hosts"];
@@ -48,17 +32,12 @@ const FORGET: [&str; 3] = [
     "lib/systemd/credential.secret",
     "lib/NetworkManager/secret_key",
 ];
-const MACHINE_ID: &str = "lib/eclipse/machine-id";
 /// What the esp needs besides the uki.
 const BOOT_FILES: [&str; 3] = [
     "EFI/BOOT/BOOTX64.EFI",
     "EFI/systemd/systemd-bootx64.efi",
     "loader/loader.conf",
 ];
-/// The mount options of persist that matter while it is filled.
-const PERSIST_OPTIONS: &str = "compress=zstd:3,noatime";
-/// What lsblk says about a disk and everything on it.
-const LSBLK: &str = "NAME,PATH,TYPE,SIZE,RM,RO,TRAN,SERIAL,MODEL,MOUNTPOINTS,FSTYPE,PARTLABEL";
 /// The programs every clone runs, looked for before anything is erased.
 const TOOLS: [&str; 11] = [
     "lsblk",
@@ -73,175 +52,6 @@ const TOOLS: [&str; 11] = [
     "mkfs.btrfs",
     "btrfs",
 ];
-
-/// A disk, a partition or a device over one, from `lsblk --json --bytes`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Block {
-    pub name: String,
-    pub path: String,
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub size: u64,
-    #[serde(default)]
-    pub rm: bool,
-    #[serde(default)]
-    pub ro: bool,
-    pub tran: Option<String>,
-    pub serial: Option<String>,
-    pub model: Option<String>,
-    #[serde(default)]
-    pub mountpoints: Vec<Option<String>>,
-    pub fstype: Option<String>,
-    pub partlabel: Option<String>,
-    #[serde(default)]
-    pub children: Vec<Block>,
-}
-
-/// The first device in what lsblk printed.
-pub fn read_lsblk(json: &str) -> Result<Block, String> {
-    #[derive(Deserialize)]
-    struct Lsblk {
-        blockdevices: Vec<Block>,
-    }
-    let found: Lsblk =
-        serde_json::from_str(json).map_err(|e| format!("lsblk printed something else: {e}"))?;
-    found
-        .blockdevices
-        .into_iter()
-        .next()
-        .ok_or_else(|| "lsblk printed no disk.".to_string())
-}
-
-/// The disks in what `lsblk --inverse --list --noheadings --output NAME,TYPE` printed for a device:
-/// the ones it is on.
-pub fn disks_in(list: &str) -> Vec<String> {
-    list.lines()
-        .filter_map(|line| {
-            let mut words = line.split_whitespace();
-            match (words.next(), words.next()) {
-                (Some(name), Some("disk")) => Some(name.to_string()),
-                _ => None,
-            }
-        })
-        .collect()
-}
-
-/// The first thing on `block` or under it that is in use: a mountpoint, swap, or a device opened
-/// over it.
-fn in_use(block: &Block) -> Option<String> {
-    if let Some(point) = block.mountpoints.iter().flatten().next() {
-        return Some(if point == "[SWAP]" {
-            format!("{} is swap", block.path)
-        } else {
-            format!("{} is mounted on {point}", block.path)
-        });
-    }
-    block.children.iter().find_map(|child| {
-        if child.kind == "part" {
-            in_use(child)
-        } else {
-            Some(format!("{} is open as {}", block.path, child.path))
-        }
-    })
-}
-
-/// How many bytes a clone needs: the esp, two slots, the exchange partition when the drive has one,
-/// and persist with room over what it holds now.
-pub fn needed(persist_used: u64, exchange: Option<u64>) -> u64 {
-    ESP_SIZE
-        + 2 * (VERITY_SIZE + STORE_SIZE)
-        + exchange.unwrap_or(0)
-        + (persist_used + HEADROOM).max(LEAST_PERSIST)
-        + SLACK
-}
-
-/// Refuses a disk a clone must not be written onto. `running` holds the names of the disks the
-/// running system is on, `needed` the bytes the clone needs.
-pub fn refuse(disk: &Block, running: &[String], needed: u64) -> Result<(), String> {
-    let path = &disk.path;
-    if disk.kind != "disk" {
-        return Err(format!(
-            "{path} is not a whole disk. Give the disk itself, not a partition or a device on it."
-        ));
-    }
-    if running.contains(&disk.name) {
-        return Err(format!("{path} is the drive this system runs from."));
-    }
-    if !(disk.rm || disk.tran.as_deref() == Some("usb")) {
-        return Err(format!(
-            "{path} is neither removable nor on USB. Vault only clones onto a stick or a USB disk, so a disk inside a computer is never erased."
-        ));
-    }
-    if disk.ro {
-        return Err(format!("{path} is read only."));
-    }
-    if let Some(why) = in_use(disk) {
-        return Err(format!("{why}. Unmount or close it first."));
-    }
-    if disk.size < needed {
-        return Err(format!(
-            "{path} holds {}, and the clone needs {}.",
-            size(disk.size),
-            size(needed)
-        ));
-    }
-    Ok(())
-}
-
-/// A partition in what `sfdisk --json` printed.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Partition {
-    pub node: String,
-    /// In sectors.
-    pub size: u64,
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub uuid: Option<String>,
-    pub name: Option<String>,
-    pub attrs: Option<String>,
-}
-
-/// A partition table from `sfdisk --json`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Table {
-    #[serde(default = "sector")]
-    pub sectorsize: u64,
-    pub partitions: Vec<Partition>,
-}
-
-fn sector() -> u64 {
-    512
-}
-
-impl Table {
-    pub fn bytes(&self, partition: &Partition) -> u64 {
-        partition.size * self.sectorsize
-    }
-
-    pub fn named(&self, name: &str) -> Option<&Partition> {
-        self.partitions
-            .iter()
-            .find(|partition| partition.name.as_deref() == Some(name))
-    }
-}
-
-pub fn read_table(json: &str) -> Result<Table, String> {
-    #[derive(Deserialize)]
-    struct Sfdisk {
-        partitiontable: Table,
-    }
-    serde_json::from_str::<Sfdisk>(json)
-        .map(|found| found.partitiontable)
-        .map_err(|e| format!("sfdisk printed a partition table Vault cannot read: {e}"))
-}
-
-/// The slot the running system is on: its version and its two partitions.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Slot {
-    pub version: String,
-    pub verity: Partition,
-    pub store: Partition,
-}
 
 /// The running slot in the running drive's table, from the partitions udev names `usr-verity` and
 /// `usr`. Their labels have to carry the version that runs.
@@ -275,58 +85,6 @@ pub fn running_slot(
         verity: find(verity, format!("store-verity_{version}"))?,
         store: find(store, format!("store_{version}"))?,
     })
-}
-
-/// The sfdisk script for the clone: the esp, the running slot as slot A with the uuids its uki
-/// looks for, an empty slot B, the exchange partition when the drive has one, and persist in the
-/// rest.
-pub fn script(slot: &Slot, exchange: Option<u64>) -> String {
-    let mut lines = vec![
-        "label: gpt".to_string(),
-        format!("size={}MiB, type={ESP_TYPE}, name=\"esp\"", ESP_SIZE / MIB),
-    ];
-    for (partition, bytes) in [(&slot.verity, VERITY_SIZE), (&slot.store, STORE_SIZE)] {
-        let mut fields = vec![
-            format!("size={}MiB", bytes / MIB),
-            format!("type={}", partition.kind),
-        ];
-        if let Some(uuid) = &partition.uuid {
-            fields.push(format!("uuid={uuid}"));
-        }
-        if let Some(name) = &partition.name {
-            fields.push(format!("name=\"{name}\""));
-        }
-        if let Some(attrs) = partition.attrs.as_deref().filter(|attrs| !attrs.is_empty()) {
-            fields.push(format!("attrs=\"{attrs}\""));
-        }
-        lines.push(fields.join(", "));
-    }
-    lines.push(format!(
-        "size={}MiB, type={USR_VERITY_TYPE}, name=\"_empty\"",
-        VERITY_SIZE / MIB
-    ));
-    lines.push(format!(
-        "size={}MiB, type={USR_TYPE}, name=\"_empty\"",
-        STORE_SIZE / MIB
-    ));
-    if let Some(bytes) = exchange {
-        lines.push(format!(
-            "size={}MiB, type={BASIC_DATA_TYPE}, name=\"exchange\"",
-            bytes.div_ceil(MIB)
-        ));
-    }
-    lines.push(format!("type={LINUX_TYPE}, name=\"persist\""));
-    lines.join("\n") + "\n"
-}
-
-/// The device of partition `number` on `disk`: `/dev/sdb1`, or `/dev/nvme0n1p1` when the disk's
-/// name ends in a digit.
-pub fn partition_node(disk: &str, number: usize) -> String {
-    if disk.ends_with(|c: char| c.is_ascii_digit()) {
-        format!("{disk}p{number}")
-    } else {
-        format!("{disk}{number}")
-    }
 }
 
 /// The uki of `version` among the file names in the esp's `EFI/Linux`: `eclipse_0.2.0.efi`, or one
@@ -400,119 +158,6 @@ pub fn read_veritysetup(status: &str) -> Option<Verity> {
     })
 }
 
-/// A machine id for 16 random bytes: 32 lower case hex digits and a newline.
-pub fn machine_id(random: [u8; 16]) -> String {
-    use std::fmt::Write as _;
-
-    let mut text = String::with_capacity(33);
-    for byte in random {
-        let _ = write!(text, "{byte:02x}");
-    }
-    text.push('\n');
-    text
-}
-
-/// What is wrong with a passphrase for the clone, if anything.
-pub fn passphrase_problem(passphrase: &str) -> Option<&'static str> {
-    (passphrase.chars().count() < 8).then_some("A passphrase needs at least 8 characters.")
-}
-
-fn serial_of(disk: &Block) -> Option<&str> {
-    disk.serial
-        .as_deref()
-        .map(str::trim)
-        .filter(|serial| !serial.is_empty())
-}
-
-/// What a person is shown about the disk before it is erased.
-pub fn describe(disk: &Block) -> Vec<String> {
-    let mut about = vec![disk.path.clone()];
-    if let Some(model) = disk
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|m| !m.is_empty())
-    {
-        about.push(model.to_string());
-    }
-    about.push(size(disk.size));
-    if let Some(serial) = serial_of(disk) {
-        about.push(format!("serial {serial}"));
-    }
-    let parts: Vec<String> = disk
-        .children
-        .iter()
-        .map(|child| {
-            let name = child
-                .partlabel
-                .as_deref()
-                .filter(|label| !label.is_empty())
-                .unwrap_or(&child.name);
-            match child.fstype.as_deref() {
-                Some(fstype) => format!("{name} ({fstype})"),
-                None => name.to_string(),
-            }
-        })
-        .collect();
-    vec![
-        format!("{}.", about.join(", ")),
-        if parts.is_empty() {
-            "It has no partitions.".to_string()
-        } else {
-            format!("It holds {}.", parts.join(", "))
-        },
-    ]
-}
-
-/// What has to be typed back before the disk is erased: its serial, or its name when it has none.
-pub fn confirmation(disk: &Block) -> &str {
-    serial_of(disk).unwrap_or(&disk.name)
-}
-
-/// Bytes in GiB with one decimal, or in MiB below that.
-pub fn size(bytes: u64) -> String {
-    if bytes >= GIB - MIB / 2 {
-        let gib = u128::from(GIB);
-        let tenths = (u128::from(bytes) * 10 + gib / 2) / gib;
-        format!("{}.{} GiB", tenths / 10, tenths % 10)
-    } else {
-        format!("{} MiB", bytes.div_ceil(MIB))
-    }
-}
-
-/// sfdisk wipes what was on the disk and on the new partitions, so nothing old is found in them.
-pub fn sfdisk_args(disk: &Path) -> Vec<OsString> {
-    let mut args: Vec<OsString> = ["--wipe", "always", "--wipe-partitions", "always", "--quiet"]
-        .map(OsString::from)
-        .into();
-    args.push(disk.into());
-    args
-}
-
-/// A new LUKS2 header, and with it a new volume key. The passphrase comes on stdin, as it is.
-pub fn format_args(partition: &Path) -> Vec<OsString> {
-    let mut args: Vec<OsString> = [
-        "luksFormat",
-        "--type",
-        "luks2",
-        "--batch-mode",
-        "--label",
-        "persist",
-        "--key-file",
-        "-",
-    ]
-    .map(OsString::from)
-    .into();
-    args.push(partition.into());
-    args
-}
-
-pub fn open_args(partition: &Path, name: &str) -> Vec<OsString> {
-    let mut args: Vec<OsString> = ["open", "--key-file", "-"].map(OsString::from).into();
-    args.extend([partition.into(), name.into()]);
-    args
-}
-
 pub fn send_args(snapshot: &Path) -> Vec<OsString> {
     vec!["send".into(), snapshot.into()]
 }
@@ -559,73 +204,6 @@ pub struct Running {
 pub struct Plan {
     pub disk: Block,
     pub running: Running,
-}
-
-/// A file system mounted until this is dropped or unmounted.
-struct Mounted {
-    path: PathBuf,
-    done: bool,
-}
-
-impl Mounted {
-    /// Mounts a file system of type `kind` that was just made. Without the type mount guesses, and
-    /// right after mkfs it can guess wrong.
-    fn new(
-        device: &Path,
-        path: PathBuf,
-        kind: &str,
-        options: Option<&str>,
-    ) -> Result<Mounted, String> {
-        fs::create_dir_all(&path).map_err(|e| format!("Could not make {}: {e}", path.display()))?;
-        let mut command = Command::new("mount");
-        command.args(["-t", kind]);
-        if let Some(options) = options {
-            command.args(["-o", options]);
-        }
-        tool(command.arg(device).arg(&path)).inspect_err(|_| {
-            let _ = fs::remove_dir(&path);
-        })?;
-        Ok(Mounted { path, done: false })
-    }
-
-    fn unmount(mut self) -> Result<(), String> {
-        self.done = true;
-        tool(Command::new("umount").arg(&self.path))?;
-        let _ = fs::remove_dir(&self.path);
-        Ok(())
-    }
-}
-
-impl Drop for Mounted {
-    fn drop(&mut self) {
-        if !self.done {
-            let _ = Command::new("umount").arg(&self.path).output();
-            let _ = fs::remove_dir(&self.path);
-        }
-    }
-}
-
-/// An opened LUKS volume, closed when this is dropped or closed.
-struct Opened {
-    name: String,
-    done: bool,
-}
-
-impl Opened {
-    fn close(mut self) -> Result<(), String> {
-        self.done = true;
-        tool(Command::new("cryptsetup").args(["close", &self.name])).map(|_| ())
-    }
-}
-
-impl Drop for Opened {
-    fn drop(&mut self) {
-        if !self.done {
-            let _ = Command::new("cryptsetup")
-                .args(["close", &self.name])
-                .output();
-        }
-    }
 }
 
 impl Cloner {
@@ -767,7 +345,7 @@ impl Cloner {
         let disk = plan.disk.path.as_str();
         say(format!("Writing a new partition table on {disk}."));
         feed(
-            Command::new("sfdisk").args(sfdisk_args(Path::new(disk))),
+            Command::new("sfdisk").args(run::sfdisk_args(Path::new(disk))),
             &script(&running.slot, running.exchange),
         )?;
         let persist = if running.exchange.is_some() { 7 } else { 6 };
@@ -782,12 +360,23 @@ impl Cloner {
             size(running.data)
         ));
         copy(
+            &mut open(&running.verity)?,
             &running.verity,
             &part(2),
+            0,
             running.verity_bytes,
+            false,
             &mut |_: String| {},
         )?;
-        copy(&running.store, &part(3), running.data, say)?;
+        copy(
+            &mut open(&running.store)?,
+            &running.store,
+            &part(3),
+            0,
+            running.data,
+            false,
+            say,
+        )?;
         if running.exchange.is_some() {
             say("Formatting the exchange partition.".into());
             tool(
@@ -812,11 +401,11 @@ impl Cloner {
             None,
         )?;
         for file in BOOT_FILES {
-            copy_file(&self.boot.join(file), &esp.path.join(file))?;
+            copy_file(&self.boot.join(file), &esp.path().join(file))?;
         }
         copy_file(
             &running.uki,
-            &esp.path.join("EFI/Linux").join(&running.uki_name),
+            &esp.path().join("EFI/Linux").join(&running.uki_name),
         )?;
         esp.unmount()
     }
@@ -828,34 +417,15 @@ impl Cloner {
         say: &mut impl FnMut(String),
     ) -> Result<(), String> {
         say("Encrypting persist with a new key.".into());
-        feed(
-            Command::new("cryptsetup").args(format_args(partition)),
+        let pid = std::process::id();
+        let persist = Persist::make(
+            partition,
             passphrase,
+            &format!("vault-clone-{pid}"),
+            self.run.join(format!("persist-{pid}")),
         )?;
-        let name = format!("vault-clone-{}", std::process::id());
-        feed(
-            Command::new("cryptsetup").args(open_args(partition, &name)),
-            passphrase,
-        )?;
-        let opened = Opened {
-            name: name.clone(),
-            done: false,
-        };
-        let mapper = Path::new("/dev/mapper").join(&name);
-        tool(
-            Command::new("mkfs.btrfs")
-                .args(["-q", "-L", "persist"])
-                .arg(&mapper),
-        )?;
-        let top = Mounted::new(
-            &mapper,
-            self.run.join(format!("persist-{}", std::process::id())),
-            "btrfs",
-            Some(PERSIST_OPTIONS),
-        )?;
-        self.fill(&top.path, say)?;
-        top.unmount()?;
-        opened.close()
+        self.fill(persist.top(), say)?;
+        persist.close()
     }
 
     /// Sends each subvolume into the clone's persist at `top`, makes `@snapshots`, and gives the
@@ -905,7 +475,7 @@ impl Cloner {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Could not make {}: {e}", parent.display()))?;
         }
-        fs::write(&id, machine_id(random()?))
+        fs::write(&id, machine_id(run::random()?))
             .map_err(|e| format!("Could not write the clone's machine id: {e}"))?;
         for file in FORGET {
             match fs::remove_file(var.join(file)) {
@@ -936,9 +506,8 @@ fn text(path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("{} is not a plain path.", path.display()))
 }
 
-fn on_path(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
+fn open(path: &Path) -> Result<File, String> {
+    File::open(path).map_err(|e| format!("Could not read {}: {e}", path.display()))
 }
 
 /// The bytes persist holds now.
@@ -946,76 +515,6 @@ fn used(persist: &Path) -> Result<u64, String> {
     let stat = rustix::fs::statvfs(persist)
         .map_err(|e| format!("Could not read how full {} is: {e}", persist.display()))?;
     Ok(stat.f_blocks.saturating_sub(stat.f_bfree) * stat.f_frsize)
-}
-
-fn random() -> Result<[u8; 16], String> {
-    let mut random = [0; 16];
-    File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut random))
-        .map_err(|e| format!("Could not get random numbers: {e}"))?;
-    Ok(random)
-}
-
-/// Waits for udev to make the new partitions' devices.
-fn settle(nodes: &[PathBuf]) -> Result<(), String> {
-    for _ in 0..50 {
-        let _ = Command::new("udevadm")
-            .args(["settle", "--timeout", "10"])
-            .output();
-        if nodes.iter().all(|node| node.exists()) {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    Err(format!(
-        "The new partitions did not show up: {}",
-        nodes
-            .iter()
-            .filter(|node| !node.exists())
-            .map(|node| node.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    ))
-}
-
-/// Copies the first `bytes` of `from` onto `to`, saying how far it is at each tenth.
-fn copy(from: &Path, to: &Path, bytes: u64, say: &mut impl FnMut(String)) -> Result<(), String> {
-    let reading = |e: io::Error| format!("Could not read {}: {e}", from.display());
-    let writing = |e: io::Error| format!("Could not write {}: {e}", to.display());
-    let mut source = File::open(from).map_err(reading)?;
-    let mut target = OpenOptions::new().write(true).open(to).map_err(writing)?;
-    let mut buffer = vec![0; CHUNK];
-    let mut done = 0;
-    let mut tenth = 1;
-    while done < bytes {
-        let want = usize::try_from(bytes - done).map_or(CHUNK, |left| left.min(CHUNK));
-        source.read_exact(&mut buffer[..want]).map_err(reading)?;
-        target.write_all(&buffer[..want]).map_err(writing)?;
-        done += u64::try_from(want).unwrap_or(u64::MAX);
-        if tenth < 10 && done * 10 >= bytes * tenth {
-            // a stick takes what is written into its cache fast and writes it out slowly
-            target.sync_data().map_err(writing)?;
-            say(format!("Copied {} of {}.", size(done), size(bytes)));
-            while tenth < 10 && done * 10 >= bytes * tenth {
-                tenth += 1;
-            }
-        }
-    }
-    target.sync_all().map_err(writing)
-}
-
-fn copy_file(from: &Path, to: &Path) -> Result<(), String> {
-    if let Some(parent) = to.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not make {}: {e}", parent.display()))?;
-    }
-    File::open(from)
-        .and_then(|mut source| {
-            let mut target = File::create(to)?;
-            io::copy(&mut source, &mut target)?;
-            target.sync_all()
-        })
-        .map_err(|e| format!("Could not copy {} to {}: {e}", from.display(), to.display()))
 }
 
 /// Sends `snapshot` with btrfs send into `folder` with btrfs receive.
@@ -1063,171 +562,9 @@ fn delete(subvolume: &Path) -> Result<(), String> {
     ])
 }
 
-/// Runs a program that has to succeed with `input` on its stdin. The input is never part of what
-/// an error says.
-fn feed(command: &mut Command, input: &str) -> Result<(), String> {
-    let line = format!("{command:?}");
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Could not run {line}: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(input.as_bytes())
-            .map_err(|e| format!("Could not give {line} its input: {e}"))?;
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("{line} stopped: {e}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{line} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The disk the boot test clones onto: a qemu scsi disk with removable on, and nothing on it.
-    const TEST_DISK: &str = r#"{
-       "blockdevices": [
-          {"name": "sda", "path": "/dev/sda", "type": "disk", "size": 25769803776, "rm": true, "ro": false,
-           "tran": null, "serial": "clone", "model": "QEMU HARDDISK   ", "mountpoints": [null],
-           "fstype": null, "partlabel": null}
-       ]
-    }"#;
-
-    /// A USB stick with an exfat partition that the desktop mounted.
-    const STICK: &str = r#"{
-       "blockdevices": [
-          {"name": "sdb", "path": "/dev/sdb", "type": "disk", "size": 61530439680, "rm": false, "ro": false,
-           "tran": "usb", "serial": "4C530001230717117401", "model": "Ultra Fit", "mountpoints": [null],
-           "fstype": null, "partlabel": null,
-           "children": [
-              {"name": "sdb1", "path": "/dev/sdb1", "type": "part", "size": 61529391104, "rm": false,
-               "ro": false, "tran": null, "serial": null, "model": null,
-               "mountpoints": ["/run/media/eclipse/STICK"], "fstype": "exfat", "partlabel": "Main Data Partition"}
-           ]}
-       ]
-    }"#;
-
-    fn stick() -> Block {
-        read_lsblk(STICK).unwrap()
-    }
-
-    #[test]
-    fn lsblk_is_read_with_its_children() {
-        let disk = read_lsblk(TEST_DISK).unwrap();
-        assert_eq!(disk.path, "/dev/sda");
-        assert!(disk.rm && !disk.ro);
-        assert_eq!(disk.size, 24 * GIB);
-        assert!(disk.children.is_empty());
-        let stick = stick();
-        assert_eq!(stick.tran.as_deref(), Some("usb"));
-        assert_eq!(
-            stick.children[0].mountpoints,
-            [Some("/run/media/eclipse/STICK".to_string())]
-        );
-        assert!(read_lsblk(r#"{"blockdevices": []}"#).is_err());
-        assert!(read_lsblk("lsblk: /dev/sdz: not a block device").is_err());
-    }
-
-    #[test]
-    fn the_disks_a_device_is_on() {
-        let list = "nvme0n1p1 part\nnvme0n1   disk\n";
-        assert_eq!(disks_in(list), ["nvme0n1"]);
-        let verity = "usr         crypt\nnvme0n1p2   part\nnvme0n1     disk\nnvme0n1p3   part\nnvme0n1     disk\n";
-        assert_eq!(disks_in(verity), ["nvme0n1", "nvme0n1"]);
-        assert!(disks_in("").is_empty());
-    }
-
-    #[test]
-    fn a_clone_needs_two_slots_and_room_for_persist() {
-        // 1G esp, 2 x 9G slots, persist of at least 2G, 64M of slack
-        assert_eq!(needed(0, None), 21 * GIB + 64 * MIB);
-        assert_eq!(needed(GIB, None), 21 * GIB + 64 * MIB);
-        assert_eq!(needed(10 * GIB, None), 30 * GIB + 64 * MIB);
-        assert_eq!(needed(10 * GIB, Some(8 * GIB)), 38 * GIB + 64 * MIB);
-    }
-
-    #[test]
-    fn the_test_disk_passes_the_rules_real_disks_do() {
-        let disk = read_lsblk(TEST_DISK).unwrap();
-        let running = ["nvme0n1".to_string()];
-        assert_eq!(refuse(&disk, &running, needed(GIB, None)), Ok(()));
-        // a USB disk that does not say it is removable is fine too, once nothing on it is mounted
-        let mut stick = stick();
-        stick.children[0].mountpoints = vec![None];
-        assert_eq!(refuse(&stick, &running, needed(GIB, None)), Ok(()));
-    }
-
-    #[test]
-    fn disks_a_clone_must_not_touch_are_refused() {
-        let running = ["nvme0n1".to_string()];
-        let need = needed(GIB, None);
-        let refused = |disk: &Block, words: &str| {
-            let why = refuse(disk, &running, need).unwrap_err();
-            assert!(why.contains(words), "{why}");
-        };
-
-        // a disk inside the computer
-        let mut internal = read_lsblk(TEST_DISK).unwrap();
-        internal.rm = false;
-        internal.tran = Some("nvme".into());
-        refused(&internal, "neither removable nor on USB");
-        internal.tran = Some("sata".into());
-        refused(&internal, "neither removable nor on USB");
-
-        // the drive this system runs from, even when it is a stick
-        let mut own = stick();
-        own.name = "nvme0n1".into();
-        refused(&own, "the drive this system runs from");
-
-        // a partition, not the disk
-        let mut partition = read_lsblk(TEST_DISK).unwrap();
-        partition.kind = "part".into();
-        refused(&partition, "not a whole disk");
-
-        refused(&stick(), "/dev/sdb1 is mounted on /run/media/eclipse/STICK");
-
-        let mut swap = stick();
-        swap.children[0].mountpoints = vec![Some("[SWAP]".into())];
-        refused(&swap, "/dev/sdb1 is swap");
-
-        let mut opened = stick();
-        opened.children[0].mountpoints = vec![None];
-        opened.children[0].children = vec![Block {
-            name: "luks-1".into(),
-            path: "/dev/mapper/luks-1".into(),
-            kind: "crypt".into(),
-            size: GIB,
-            rm: false,
-            ro: false,
-            tran: None,
-            serial: None,
-            model: None,
-            mountpoints: vec![None],
-            fstype: None,
-            partlabel: None,
-            children: Vec::new(),
-        }];
-        refused(&opened, "/dev/sdb1 is open as /dev/mapper/luks-1");
-
-        let mut locked = read_lsblk(TEST_DISK).unwrap();
-        locked.ro = true;
-        refused(&locked, "read only");
-
-        let mut small = read_lsblk(TEST_DISK).unwrap();
-        small.size = 16 * GIB;
-        refused(&small, "holds 16.0 GiB, and the clone needs 21.1 GiB");
-    }
 
     /// The running drive after an update and a rollback: 0.2.0 runs from slot b, 0.3.0 is in slot a.
     const TABLE: &str = r#"{
@@ -1254,8 +591,6 @@ mod tests {
     #[test]
     fn the_running_slot_is_found_by_its_partitions_and_version() {
         let table = read_table(TABLE).unwrap();
-        assert_eq!(table.bytes(table.named("esp").unwrap()), GIB);
-        assert_eq!(table.named("exchange"), None);
         let slot = running_slot(&table, "/dev/nvme0n1p4", "/dev/nvme0n1p5", "0.2.0").unwrap();
         assert_eq!(slot.version, "0.2.0");
         assert_eq!(
@@ -1263,6 +598,13 @@ mod tests {
             Some("5C1D8E0A-2B3C-4D5E-8F90-A1B2C3D4E5F6")
         );
         assert_eq!(slot.store.name.as_deref(), Some("store_0.2.0"));
+        // slot a of the clone is this slot, under its uuids
+        assert!(
+            script(&slot, None)
+                .lines()
+                .nth(3)
+                .is_some_and(|line| line.contains("uuid=7E8F9A0B-1C2D-4E3F-9051-627384950A1B"))
+        );
 
         // os-release says 0.3.0 while 0.2.0's partitions run
         let why = running_slot(&table, "/dev/nvme0n1p4", "/dev/nvme0n1p5", "0.3.0").unwrap_err();
@@ -1271,39 +613,6 @@ mod tests {
             "{why}"
         );
         assert!(running_slot(&table, "/dev/sda2", "/dev/sda3", "0.2.0").is_err());
-        assert!(read_table("[]").is_err());
-    }
-
-    #[test]
-    fn the_clone_gets_the_running_slot_as_slot_a_and_an_empty_slot_b() {
-        let table = read_table(TABLE).unwrap();
-        let slot = running_slot(&table, "/dev/nvme0n1p4", "/dev/nvme0n1p5", "0.2.0").unwrap();
-        assert_eq!(
-            script(&slot, None),
-            "label: gpt\n\
-             size=1024MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name=\"esp\"\n\
-             size=1024MiB, type=77FF5F63-E7B6-4633-ACF4-1565B864C0E6, uuid=5C1D8E0A-2B3C-4D5E-8F90-A1B2C3D4E5F6, name=\"store-verity_0.2.0\", attrs=\"GUID:60\"\n\
-             size=8192MiB, type=8484680C-9521-48C6-9C11-B0720656F69E, uuid=7E8F9A0B-1C2D-4E3F-9051-627384950A1B, name=\"store_0.2.0\"\n\
-             size=1024MiB, type=77FF5F63-E7B6-4633-ACF4-1565B864C0E6, name=\"_empty\"\n\
-             size=8192MiB, type=8484680C-9521-48C6-9C11-B0720656F69E, name=\"_empty\"\n\
-             type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, name=\"persist\"\n"
-        );
-        let with_exchange = script(&slot, Some(8 * GIB));
-        let lines: Vec<&str> = with_exchange.lines().collect();
-        assert_eq!(lines.len(), 8);
-        assert_eq!(
-            lines[6],
-            "size=8192MiB, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name=\"exchange\""
-        );
-        assert!(lines[7].ends_with("name=\"persist\""));
-    }
-
-    #[test]
-    fn partitions_are_named_the_way_the_kernel_names_them() {
-        assert_eq!(partition_node("/dev/sdb", 1), "/dev/sdb1");
-        assert_eq!(partition_node("/dev/sdb", 6), "/dev/sdb6");
-        assert_eq!(partition_node("/dev/nvme1n1", 3), "/dev/nvme1n1p3");
-        assert_eq!(partition_node("/dev/mmcblk0", 7), "/dev/mmcblk0p7");
     }
 
     #[test]
@@ -1414,88 +723,12 @@ mod tests {
     }
 
     #[test]
-    fn a_machine_id_is_32_hex_digits() {
-        assert_eq!(machine_id([0; 16]), "00000000000000000000000000000000\n");
-        let mut random = [0xab; 16];
-        random[15] = 0x01;
-        assert_eq!(machine_id(random), "ababababababababababababababab01\n");
-    }
-
-    #[test]
-    fn a_passphrase_has_at_least_8_characters() {
-        assert!(passphrase_problem("").is_some());
-        assert!(passphrase_problem("seven77").is_some());
-        assert_eq!(passphrase_problem("eight888"), None);
-        // characters, not bytes
-        assert!(passphrase_problem(&"\u{e9}".repeat(7)).is_some());
-    }
-
-    #[test]
-    fn the_disk_is_shown_before_it_is_erased() {
-        assert_eq!(
-            describe(&stick()),
-            [
-                "/dev/sdb, Ultra Fit, 57.3 GiB, serial 4C530001230717117401.",
-                "It holds Main Data Partition (exfat)."
-            ]
-        );
-        assert_eq!(confirmation(&stick()), "4C530001230717117401");
-        let disk = read_lsblk(TEST_DISK).unwrap();
-        assert_eq!(
-            describe(&disk),
-            [
-                "/dev/sda, QEMU HARDDISK, 24.0 GiB, serial clone.",
-                "It has no partitions."
-            ]
-        );
-        let mut nameless = disk;
-        nameless.serial = Some("   ".into());
-        assert_eq!(confirmation(&nameless), "sda");
-    }
-
-    #[test]
-    fn sizes_read_in_binary_units() {
-        assert_eq!(size(512 * MIB), "512 MiB");
-        assert_eq!(size(GIB), "1.0 GiB");
-        assert_eq!(size(12_163_072 * 512), "5.8 GiB");
-    }
-
-    #[test]
-    fn the_tools_get_the_disk_and_never_the_passphrase() {
+    fn btrfs_sends_and_receives_the_paths_it_is_given() {
         let words = |args: Vec<OsString>| {
             args.into_iter()
                 .map(|arg| arg.to_string_lossy().into_owned())
                 .collect::<Vec<_>>()
         };
-        assert_eq!(
-            words(sfdisk_args(Path::new("/dev/sda"))),
-            [
-                "--wipe",
-                "always",
-                "--wipe-partitions",
-                "always",
-                "--quiet",
-                "/dev/sda"
-            ]
-        );
-        assert_eq!(
-            words(format_args(Path::new("/dev/sda6"))),
-            [
-                "luksFormat",
-                "--type",
-                "luks2",
-                "--batch-mode",
-                "--label",
-                "persist",
-                "--key-file",
-                "-",
-                "/dev/sda6"
-            ]
-        );
-        assert_eq!(
-            words(open_args(Path::new("/dev/sda6"), "vault-clone-7")),
-            ["open", "--key-file", "-", "/dev/sda6", "vault-clone-7"]
-        );
         assert_eq!(
             words(send_args(Path::new("/persist/@snapshots/clone/@home"))),
             ["send", "/persist/@snapshots/clone/@home"]

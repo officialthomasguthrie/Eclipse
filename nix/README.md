@@ -8,5 +8,5 @@ totality/   Boot splash. The PNGs come from tools/gen-totality-assets.py.
 
 image/default.nix follows the repart verity-store appliance layout from nixpkgs
 (nixos/tests/appliance-repart-image-verity-store.nix). It builds in CI (eclipse_0.1.0.raw, about 4.9G)
-and the boot job boots it in QEMU: tools/persist-image.sh adds the persist partition,
+and the boot job boots it in QEMU: eclipse-flash writes it onto a drive in a file,
 tools/boot-test.py unlocks it over serial and checks the shell. Not booted on real hardware yet.
