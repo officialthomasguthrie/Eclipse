@@ -51,7 +51,17 @@ jobs:
           image=$(awk 'NR == 1 { print $1 }' attach.txt)
           diskutil list -plist > list-attached.plist
           diskutil info -plist "$image" > info-image.plist
+          mkdir attached
+          for name in $(python3 -c 'import plistlib; print(" ".join(plistlib.load(open("list-attached.plist", "rb"))["WholeDisks"]))'); do
+            diskutil info -plist "$name" > "attached/info-$name.plist" || echo "no info for $name"
+          done
+          diskutil info -plist / > attached/info-root.plist
           ls -l "$image" "${image/disk/rdisk}" > nodes.txt
+          diskutil unmountDisk "$image" > unmount.txt 2>&1 || true
+          sudo python3 -c 'import os, sys; fd = os.open(sys.argv[1], os.O_RDWR); os.lseek(fd, 1048576, 0); print(os.write(fd, bytes(1048576))); os.fsync(fd); print("fsync works")' "/dev/r${image#/dev/}" > fsync.txt 2>&1 || true
+          sudo python3 -c 'import os, sys; fd = os.open(sys.argv[1], os.O_RDWR); os.lseek(fd, 0, 2); print(os.lseek(fd, 0, 1))' "/dev/r${image#/dev/}" > seek-end.txt 2>&1 || true
+          sudo python3 -c 'import os, sys; fd = os.open(sys.argv[1], os.O_RDWR); os.write(fd, bytes(100))' "/dev/r${image#/dev/}" > unaligned.txt 2>&1 || true
+          cat unmount.txt fsync.txt seek-end.txt unaligned.txt
           hdiutil detach "$image"
           ls -la
       - uses: actions/upload-artifact@v4
