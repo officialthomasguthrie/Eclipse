@@ -27,6 +27,107 @@ jobs:
       - run: cargo clippy --workspace --exclude umbra --exclude niri-config --exclude niri-ipc --all-targets -- -D warnings
       - run: cargo test --workspace --exclude umbra --exclude niri-config --exclude niri-ipc
 
+  capture-macos:
+    name: Capture macOS disks
+    runs-on: macos-latest
+    steps:
+      - name: Capture
+        run: |
+          mkdir captures && cd captures
+          diskutil list > list.txt
+          diskutil list -plist > list.plist
+          for d in $(diskutil list | awk '/^\/dev\/disk/ { print $1 }'); do
+            name=${d#/dev/}
+            diskutil info -plist "$name" > "info-$name.plist" || true
+          done
+          diskutil info -plist / > info-root.plist
+          sudo -n true && echo "sudo works" > sudo.txt
+          id -u > uid.txt
+          sw_vers > sw_vers.txt
+          df -h > df.txt
+          mkfile -n 22g "$RUNNER_TEMP/drive.img"
+          hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount "$RUNNER_TEMP/drive.img" > attach.txt
+          cat attach.txt
+          image=$(awk 'NR == 1 { print $1 }' attach.txt)
+          diskutil list -plist > list-attached.plist
+          diskutil info -plist "$image" > info-image.plist
+          ls -l "$image" "${image/disk/rdisk}" > nodes.txt
+          hdiutil detach "$image"
+          ls -la
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: capture-macos
+          path: captures
+
+  capture-windows:
+    name: Capture Windows disks
+    runs-on: windows-latest
+    steps:
+      - name: Capture
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory captures | Out-Null
+          Set-Location captures
+          $query = @'
+          $ErrorActionPreference = 'Stop'
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+          [pscustomobject]@{
+            Administrator = $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            Disks = @(Get-Disk | ForEach-Object {
+              [pscustomobject]@{
+                Number = $_.Number
+                FriendlyName = $_.FriendlyName
+                SerialNumber = $_.SerialNumber
+                BusType = [string]$_.BusType
+                Size = $_.Size
+                LogicalSectorSize = $_.LogicalSectorSize
+                IsBoot = $_.IsBoot
+                IsSystem = $_.IsSystem
+                IsReadOnly = $_.IsReadOnly
+                IsOffline = $_.IsOffline
+                PartitionStyle = [string]$_.PartitionStyle
+              }
+            })
+            Partitions = @(Get-Partition | ForEach-Object {
+              $volume = $_ | Get-Volume -ErrorAction SilentlyContinue
+              [pscustomobject]@{
+                DiskNumber = $_.DiskNumber
+                PartitionNumber = $_.PartitionNumber
+                DriveLetter = [string]$_.DriveLetter
+                AccessPaths = @($_.AccessPaths)
+                Size = $_.Size
+                FileSystem = $volume.FileSystem
+                Label = $volume.FileSystemLabel
+              }
+            })
+          } | ConvertTo-Json -Depth 3
+          '@
+          Set-Content -Path query.ps1 -Value $query
+          powershell -NoProfile -NonInteractive -Command $query > query.json
+          Get-Disk | ConvertTo-Json -Depth 2 > get-disk.json
+          Get-Partition | ConvertTo-Json -Depth 2 > get-partition.json
+          Get-Volume | ConvertTo-Json -Depth 2 > get-volume.json
+          Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize | Out-String -Width 200 > psdrive.txt
+          whoami /groups > groups.txt
+          $vhd = Join-Path $env:RUNNER_TEMP 'drive.vhdx'
+          "create vdisk file=`"$vhd`" maximum=22528 type=expandable`nselect vdisk file=`"$vhd`"`nattach vdisk" | Set-Content attach.txt
+          diskpart /s attach.txt > diskpart-attach.txt
+          Get-Content diskpart-attach.txt
+          Start-Sleep -Seconds 5
+          powershell -NoProfile -NonInteractive -Command $query > query-attached.json
+          Get-Disk | ConvertTo-Json -Depth 2 > get-disk-attached.json
+          Get-Content query-attached.json
+          "select vdisk file=`"$vhd`"`ndetach vdisk" | Set-Content detach.txt
+          diskpart /s detach.txt > diskpart-detach.txt
+          Get-ChildItem
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: capture-windows
+          path: captures
+
   nix:
     name: Nix flake
     runs-on: ubuntu-latest
