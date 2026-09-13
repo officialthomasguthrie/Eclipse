@@ -1663,9 +1663,13 @@ def main():
         esp_uuid = one_line("lsblk --noheadings --output UUID /dev/disk/by-designator/esp", "the esp's uuid", uuid)
         machine = one_line("cat /etc/machine-id", "the machine id", r"^\s*([0-9a-f]{32})\s*$")
         usrhash = one_line("cat /proc/cmdline", "the usrhash", r"usrhash=([0-9a-f]{64})")
-        store_uuid = one_line("lsblk --noheadings --output PARTUUID /dev/disk/by-designator/usr",
+        # by-designator/usr is the verity device, not a partition. veritysetup names the two partitions
+        running_store = one_line("sudo veritysetup status usr", "the store /usr runs from", r"data device:\s*(\S+)")
+        running_verity = one_line("sudo veritysetup status usr", "the verity partition /usr runs from",
+                                  r"hash device:\s*(\S+)")
+        store_uuid = one_line(f"lsblk --noheadings --output PARTUUID {running_store}",
                               "the store's partition uuid", uuid).lower()
-        verity_uuid = one_line("lsblk --noheadings --output PARTUUID /dev/disk/by-designator/usr-verity",
+        verity_uuid = one_line(f"lsblk --noheadings --output PARTUUID {running_verity}",
                                "the verity partition's uuid", uuid).lower()
         first_persist = one_line(f"lsblk --list --noheadings --output PATH,PARTLABEL /dev/{boot}",
                                  "the persist partition of the boot drive", r"^\s*(\S+)\s+persist\s*$")
