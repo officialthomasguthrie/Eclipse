@@ -187,7 +187,7 @@ fn mac_line(words: &[String], (out, err): (&Path, &Path)) -> String {
 }
 
 /// Start-Process's exit code here when Windows did not start the program, the prompt declined among
-/// the reasons. It is ERROR_CANCELLED.
+/// the reasons. It is `ERROR_CANCELLED`.
 #[cfg(windows)]
 const NOT_STARTED: i32 = 1223;
 
