@@ -238,10 +238,13 @@ fn program() -> Result<PathBuf, String> {
         })
 }
 
+/// The image at `path`, which is made absolute: eclipse-flash starts with rights in a folder of its
+/// own, and the page says which folder the image is in.
 fn chosen(path: &Path) -> Chosen {
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     Chosen {
-        path: path.to_path_buf(),
-        version: eclipse_flash::version(path),
+        version: eclipse_flash::version(&path),
+        path,
     }
 }
 
