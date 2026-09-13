@@ -14,6 +14,15 @@ path = "src/main.rs"
 
 [dependencies]
 libeclipse.workspace = true
+# whether it was started as root, without unsafe code
+rustix = { version = "1.1", default-features = false, features = ["process", "std"] }
+
+# inside the sandbox: Landlock rules and a seccomp filter, through crates that keep the unsafe calls
+# to themselves. libc for the system call numbers
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4.7"
+seccompiler = "0.5"
+libc = "0.2.189"
 
 [lints]
 workspace = true

@@ -1689,6 +1689,102 @@ def main():
         ok("rustic refuses the repository with a wrong password and opens it with the printed one, "
            "and the file's text is in none of its files")
 
+    # 6c. penumbra. `eclipse run --sandbox` runs a command in bwrap, under landlock rules and a seccomp
+    # filter. it gets the folder it runs in and the system's programs, nothing else of the owner's: not
+    # the rest of home, not /persist, not a disk of the vm. what it writes outside its folder is gone
+    # when it ends, and home as a whole goes in only read only
+    home, sandbox = "/home/eclipse", "/home/eclipse/sandbox"
+    secret, secret_words = "/home/eclipse/private.txt", "Kept out of the sandbox 5813"
+
+    def sandboxed(command, what):
+        status, output = run(command, what)
+        printed = without_console(output)
+        print(f"\nboot-test: {command} printed:\n{printed}", flush=True)
+        return status, printed
+
+    def said(printed, word):
+        return re.search(rf"^{re.escape(word)}\s*$", printed, re.M) is not None
+
+    status, output = run(f"mkdir -p {sandbox}; and printf '{secret_words}\\n' > {secret}", "the files for the sandbox")
+    if status != 0:
+        fail(f"the files for the sandbox could not be written: {without_console(output).strip()!r}")
+    _, output = run("lsblk --nodeps --noheadings --output NAME", "the disks of the vm")
+    disks = re.findall(r"^\s*((?:nvme|sd|vd)\w+)\s*$", without_console(output), re.M)
+    if not disks:
+        fail(f"lsblk lists no disks in the vm: {without_console(output).strip()!r}")
+
+    # the folder it runs in is the one it gets
+    status, printed = sandboxed(f"cd {sandbox}; and eclipse run --sandbox sh -c 'echo made > made.txt; "
+                                f"grep -E \"^(NoNewPrivs|Seccomp):\" /proc/self/status; echo dev:; ls -A /dev; "
+                                f"echo home:; ls -A {home}'", "a command in a sandbox")
+    run("cd ~", "going home again")
+    if status != 0:
+        fail(f"eclipse run --sandbox exited with {status}")
+    if not re.search(r"^NoNewPrivs:\s+1\s*$", printed, re.M) or not re.search(r"^Seccomp:\s+2\s*$", printed, re.M):
+        fail("the sandboxed command does not run with no new privileges and a seccomp filter")
+    listed = re.search(r"^dev:\s*$(.*)^home:\s*$(.*)", printed, re.M | re.S)
+    if not listed:
+        fail("the sandboxed command did not list /dev and home")
+    devices = listed.group(1).split()
+    seen = [name for name in devices if name.startswith(tuple(disks)) or name in ("disk", "mapper", "block")
+            or name.startswith(("dm-", "loop"))]
+    if "null" not in devices or seen:
+        fail(f"/dev in the sandbox has {seen or devices}, expected no disks and a null device")
+    if listed.group(2).split() != ["sandbox"]:
+        fail(f"home in the sandbox holds {listed.group(2).split()}, expected only the folder it runs in")
+    _, output = run(f"stat -c owner=%U:%a {sandbox}/made.txt; and cat {sandbox}/made.txt", "the file the sandbox made")
+    if "owner=eclipse:644" not in output or not said(without_console(output), "made"):
+        fail(f"the sandbox did not make {sandbox}/made.txt as the owner: {without_console(output).strip()!r}")
+    ok(f"eclipse run --sandbox ran in {sandbox} with a seccomp filter, no disk in /dev and nothing else of home")
+
+    # what it cannot reach. home and /tmp in the sandbox are empty and its own, the rest is not there
+    status, printed = sandboxed(
+        f"eclipse run --sandbox --folder {sandbox} sh -c 'test -e /persist && echo persist-there; "
+        f"test -e /sys/block && echo sys-there; test -e /var/lib/eclipse && echo var-there; "
+        f"cat {secret} && echo secret-read; cat /dev/{disks[0]} > /dev/null && echo disk-read; "
+        f"echo out > {home}/outside.txt && echo home-written; echo out > /tmp/outside.txt && echo tmp-written; "
+        f"echo renamed > /proc/self/comm && echo proc-written; unshare --user true; echo finished'",
+        "what a sandbox cannot reach")
+    if status != 0 or not said(printed, "finished"):
+        fail(f"the sandboxed command exited with {status} before it finished")
+    reached = [word for word in ("persist-there", "sys-there", "var-there", "secret-read", "disk-read", "proc-written")
+               if said(printed, word)]
+    if reached or secret_words in printed:
+        fail(f"the sandbox reached what it must not: {reached or 'the words of ' + secret}")
+    if not said(printed, "home-written") or not said(printed, "tmp-written"):
+        fail("the sandbox could not write into its own empty home and /tmp")
+    if "Operation not permitted" not in printed:
+        fail("unshare in the sandbox was not refused by the seccomp filter")
+    status, _ = run(f"test -e {home}/outside.txt -o -e /tmp/outside.txt", "whether what the sandbox wrote outside is there")
+    if status == 0:
+        fail("what the sandbox wrote outside its folder is still there after it ended")
+    ok(f"the sandbox found no /persist, /sys or /var, could not read {secret} or /dev/{disks[0]} or write to /proc, "
+       f"was refused a user namespace, and what it wrote outside {sandbox} was gone")
+
+    # home as a whole, read only
+    status, printed = sandboxed(f"eclipse run --sandbox --folder {sandbox} --read {home} sh -c 'cat {secret}; "
+                                f"echo changed > {secret} && echo secret-written; echo new > {sandbox}/new.txt "
+                                f"&& echo folder-written'", "a sandbox with home read only")
+    if secret_words not in printed or said(printed, "secret-written") or not said(printed, "folder-written"):
+        fail(f"with --read {home} the sandbox did not read {secret}, or wrote to it, or could not write to its folder")
+    if secret_words not in contents(secret):
+        fail(f"{secret} changed after a sandbox had it read only")
+    ok(f"with --read {home} the sandbox read {secret} and could not change it")
+
+    # what eclipse run refuses before anything runs
+    for command, words in ((f"eclipse run --sandbox --folder {sandbox} --read /persist true",
+                            "/persist cannot go into a sandbox."),
+                           (f"eclipse run --sandbox --folder {sandbox} --read /dev/{disks[0]} true",
+                            f"/dev/{disks[0]} cannot go into a sandbox."),
+                           (f"eclipse run --sandbox --folder {home} true", f"{home} is all of your home folder."),
+                           ("cd ~; and eclipse run --sandbox true", "that is all of your home folder."),
+                           (f"sudo eclipse run --sandbox --folder {sandbox} true", "not as root."),
+                           ("eclipse run true", "--sandbox is needed")):
+        status, printed = sandboxed(command, f"what {command} refuses")
+        if status not in (1, 2) or words not in " ".join(printed.split()):
+            fail(f"{command} exited with {status} without saying {words!r}")
+    ok("eclipse run refused /persist, a disk, all of home, root and a command without --sandbox")
+
     # 7. the update. the second drive holds two newer versions' files. systemd-sysupdate checks them
     # against SHA256SUMS, writes the store and its verity partition into the free slot under the
     # uuids in their names and puts the uki on the esp with three tries. then the vm reboots into it

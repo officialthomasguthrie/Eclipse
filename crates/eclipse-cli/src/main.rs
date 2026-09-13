@@ -1,6 +1,6 @@
 //! eclipse: the CLI. `host`, `ai`, `doctor`, `snapshot` and `backup` ask the same D-Bus services
-//! Corona uses, and `clone` runs Vault as root. The other commands are only a line in the help so
-//! far.
+//! Corona uses, `clone` runs Vault as root, and `run --sandbox` runs Penumbra. The other commands
+//! are only a line in the help so far.
 
 mod ai;
 mod backup;
@@ -8,6 +8,7 @@ mod clone;
 mod doctor;
 mod host;
 mod restore;
+mod run;
 mod snapshot;
 mod text;
 
@@ -69,6 +70,7 @@ fn main() -> ExitCode {
         Some("snapshot") => snapshot::run(rest),
         Some("backup") => backup::run(rest),
         Some("clone") => clone::run(rest),
+        Some("run") => run::run(rest),
         Some(cmd) => {
             if let Some((name, what, phase)) = COMMANDS.iter().find(|(name, _, _)| *name == cmd) {
                 eprintln!("eclipse {name}: {what}. Not implemented yet ({phase}).");
