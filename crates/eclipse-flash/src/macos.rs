@@ -100,7 +100,7 @@ impl System for Mac {
         })
     }
 
-    fn open(&self, disk: &Disk) -> Result<File, String> {
+    fn open(&self, disk: &Disk) -> Result<Raw, String> {
         diskutil(&["unmountDisk", &disk.path])
             .map_err(|why| format!("Could not unmount what is on {}. {why}", disk.path))?;
         let raw = format!("/dev/r{}", disk.name);
@@ -108,6 +108,7 @@ impl System for Mac {
             .read(true)
             .write(true)
             .open(&raw)
+            .map(Raw)
             .map_err(|e| format!("Could not open {raw}: {e}"))
     }
 
