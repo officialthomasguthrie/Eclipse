@@ -27,6 +27,153 @@ jobs:
       - run: cargo clippy --workspace --exclude umbra --exclude niri-config --exclude niri-ipc --all-targets -- -D warnings
       - run: cargo test --workspace --exclude umbra --exclude niri-config --exclude niri-ipc
 
+  flash-macos:
+    # eclipse-flash on a mac: clippy and the tests, then the runner's own disks refused, and a drive
+    # written onto a disk image hdiutil attaches as a disk, the way a stick is written, and into a file
+    name: eclipse-flash on macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p libeclipse --features disk --all-targets -- -D warnings
+      - run: cargo clippy -p eclipse-flash --all-targets -- -D warnings
+      - run: cargo test -p libeclipse --features disk
+      - run: cargo test -p eclipse-flash
+      - run: cargo build --release -p eclipse-flash --bin eclipse-flash --example test-drive
+      - name: Write a drive onto a disk image
+        run: |
+          flash=target/release/eclipse-flash
+          sample=target/release/examples/test-drive
+          "$sample" image sample.raw.zst
+          refused() {
+            what=$1 words=$2
+            shift 2
+            if out=$("$@" 2>&1); then
+              echo "$out"
+              echo "::error::eclipse-flash wrote onto $what"
+              exit 1
+            fi
+            echo "$what: $out"
+            if ! grep -qE -- "$words" <<<"$out"; then
+              echo "::error::eclipse-flash did not refuse $what with: $words"
+              exit 1
+            fi
+          }
+          refused "a disk without root" "needs root" "$flash" write --serial disk0 sample.raw.zst /dev/disk0
+          # each of the runner's disks is refused, the one macOS runs from among them
+          running=0
+          for disk in $(diskutil list | awk '/^\/dev\/disk/ { print $1 }'); do
+            refused "the runner's disk $disk" "is the drive this system runs from\.|is not a whole disk\.|is neither removable nor on USB\.|is read only\.|Unmount or close it first\." \
+              sudo "$flash" write --serial "${disk#/dev/}" sample.raw.zst "$disk"
+            if grep -qF "is the drive this system runs from." <<<"$out"; then running=1; fi
+          done
+          if [ "$running" != 1 ]; then
+            echo "::error::eclipse-flash did not find the disk macOS runs from"
+            exit 1
+          fi
+          # a raw file of 24G attached as a disk, with nothing mounted from it
+          mkfile -n 24g drive.img
+          image=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount drive.img | awk 'NR == 1 { print $1 }')
+          "$flash" list | tee list.txt
+          grep -qF "$image, Disk Image, 24.0 GiB." list.txt
+          refused "a wrong name" "is not the name of $image\. Nothing was written\." \
+            sudo "$flash" write --serial disk99 sample.raw.zst "$image"
+          sudo "$flash" write --exchange 64M --serial "${image#/dev/}" sample.raw.zst "$image"
+          # eclipse-flash ejects the disk it wrote, and the file behind it holds the drive
+          if diskutil info "$image" >/dev/null 2>&1; then
+            echo "::error::$image is still attached"
+            exit 1
+          fi
+          "$sample" check drive.img
+          image=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount drive.img | awk 'NR == 1 { print $1 }')
+          diskutil list "$image"
+          hdiutil detach "$image"
+          # a file for a virtual machine
+          mkfile -n 24g file.img
+          sudo "$flash" write sample.raw.zst file.img
+          "$sample" check file.img
+          refused "a file written once" "is not empty" sudo "$flash" write sample.raw.zst file.img
+          rm drive.img file.img
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: eclipse-flash-macos-${{ github.sha }}
+          path: target/release/eclipse-flash
+          retention-days: 14
+
+  flash-windows:
+    # eclipse-flash on windows: clippy and the tests, then the runner's own disks refused, and a drive
+    # written onto a VHDX diskpart attaches as a disk, the way a stick is written
+    name: eclipse-flash on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p libeclipse --features disk --all-targets -- -D warnings
+      - run: cargo clippy -p eclipse-flash --all-targets -- -D warnings
+      - run: cargo test -p libeclipse --features disk
+      - run: cargo test -p eclipse-flash
+      - run: cargo build --release -p eclipse-flash --bin eclipse-flash --example test-drive
+      - name: Write a drive onto a virtual disk
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $flash = 'target\release\eclipse-flash.exe'
+          $sample = 'target\release\examples\test-drive.exe'
+          function Refused($what, $words, [string[]]$arguments) {
+            $out = & $flash @arguments 2>&1 | Out-String
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host $out
+              throw "eclipse-flash wrote onto $what"
+            }
+            Write-Host "${what}: $out"
+            if ($out -notmatch $words) {
+              throw "eclipse-flash did not refuse $what with: $words"
+            }
+            return $out
+          }
+          & $sample image sample.raw.zst
+          if ($LASTEXITCODE -ne 0) { throw 'test-drive did not write the sample image' }
+          # each of the runner's disks is refused, the one Windows runs from among them
+          $running = $false
+          foreach ($disk in Get-Disk) {
+            $name = "\\.\PhysicalDrive$($disk.Number)"
+            $out = Refused $name 'is the drive this system runs from\.|is neither removable nor on USB\.' @('write', '--serial', "PhysicalDrive$($disk.Number)", 'sample.raw.zst', $name)
+            if ($out -match 'runs from') { $running = $true }
+          }
+          if (-not $running) { throw 'eclipse-flash did not find the disk Windows runs from' }
+          # a VHDX of 24G attached as a disk, with no partitions on it
+          $vhd = Join-Path $env:RUNNER_TEMP 'drive.vhdx'
+          "create vdisk file=`"$vhd`" maximum=24576 type=expandable`nselect vdisk file=`"$vhd`"`nattach vdisk" | Set-Content attach.txt
+          diskpart /s attach.txt
+          if ($LASTEXITCODE -ne 0) { throw 'diskpart did not attach the virtual disk' }
+          Start-Sleep -Seconds 5
+          $number = (Get-Disk | Where-Object { [string]$_.BusType -eq 'File Backed Virtual' }).Number
+          $name = "\\.\PhysicalDrive$number"
+          $list = & $flash list | Out-String
+          Write-Output $list
+          if (-not $list.Contains("$name, Msft Virtual Disk, 24.0 GiB.")) { throw "eclipse-flash list does not show $name" }
+          Refused 'a wrong name' 'is not the name of' @('write', '--serial', 'PhysicalDrive99', 'sample.raw.zst', $name)
+          & $flash write --exchange 64M --serial "PhysicalDrive$number" sample.raw.zst $name
+          if ($LASTEXITCODE -ne 0) { throw "eclipse-flash did not write $name" }
+          & $sample check $name
+          if ($LASTEXITCODE -ne 0) { throw "$name does not hold the drive" }
+          Get-Partition -DiskNumber $number | Format-Table -AutoSize
+          "select vdisk file=`"$vhd`"`ndetach vdisk" | Set-Content detach.txt
+          diskpart /s detach.txt
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: eclipse-flash-windows-${{ github.sha }}
+          path: target/release/eclipse-flash.exe
+          retention-days: 14
+
   nix:
     name: Nix flake
     runs-on: ubuntu-latest

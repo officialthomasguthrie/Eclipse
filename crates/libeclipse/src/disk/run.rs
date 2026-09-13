@@ -360,6 +360,22 @@ pub fn settle(nodes: &[PathBuf]) -> Result<(), String> {
     ))
 }
 
+/// What a drive is written onto, opened once: a disk, a file, or a stand in for one in tests.
+pub trait Drive: Read + Write + Seek {
+    /// Makes sure what was written so far is on the disk, not only in a cache.
+    ///
+    /// # Errors
+    ///
+    /// When the system cannot.
+    fn sync(&mut self) -> io::Result<()>;
+}
+
+impl Drive for File {
+    fn sync(&mut self) -> io::Result<()> {
+        self.sync_data()
+    }
+}
+
 /// Copies `bytes` from `source`, which reads `from`, onto `to` from `offset` on, saying how far it
 /// is at each tenth. With `sparse` a chunk of zeros is skipped instead of written, so `to` has to
 /// read as zeros there already, the way a file cut to its size does.
@@ -376,10 +392,40 @@ pub fn copy(
     sparse: bool,
     say: &mut impl FnMut(String),
 ) -> Result<(), String> {
+    let mut target = OpenOptions::new()
+        .write(true)
+        .open(to)
+        .map_err(|e| format!("Could not write {}: {e}", to.display()))?;
+    copy_to(
+        source,
+        &mut target,
+        (from, to),
+        (offset, bytes),
+        sparse,
+        say,
+    )?;
+    target
+        .sync_all()
+        .map_err(|e| format!("Could not write {}: {e}", to.display()))
+}
+
+/// Copies `bytes` from `source` onto `drive` from `offset` on, the way [`copy`] does. `from` and `to`
+/// are what `source` and `drive` read and write, for what an error says.
+///
+/// # Errors
+///
+/// When reading or writing fails, or `source` ends early.
+pub fn copy_to(
+    source: &mut impl Read,
+    drive: &mut impl Drive,
+    (from, to): (&Path, &Path),
+    (offset, bytes): (u64, u64),
+    sparse: bool,
+    say: &mut impl FnMut(String),
+) -> Result<(), String> {
     let reading = |e: io::Error| format!("Could not read {}: {e}", from.display());
     let writing = |e: io::Error| format!("Could not write {}: {e}", to.display());
-    let mut target = OpenOptions::new().write(true).open(to).map_err(writing)?;
-    target.seek(SeekFrom::Start(offset)).map_err(writing)?;
+    drive.seek(SeekFrom::Start(offset)).map_err(writing)?;
     let mut buffer = vec![0; CHUNK];
     let mut done = 0;
     let mut tenth = 1;
@@ -388,23 +434,23 @@ pub fn copy(
         let chunk = &mut buffer[..want];
         source.read_exact(chunk).map_err(reading)?;
         if sparse && chunk.iter().all(|&byte| byte == 0) {
-            target
+            drive
                 .seek(SeekFrom::Current(i64::try_from(want).unwrap_or(i64::MAX)))
                 .map_err(writing)?;
         } else {
-            target.write_all(chunk).map_err(writing)?;
+            drive.write_all(chunk).map_err(writing)?;
         }
         done += u64::try_from(want).unwrap_or(u64::MAX);
         if tenth < 10 && done * 10 >= bytes * tenth {
             // a stick takes what is written into its cache fast and writes it out slowly
-            target.sync_data().map_err(writing)?;
+            drive.sync().map_err(writing)?;
             say(format!("Copied {} of {}.", size(done), size(bytes)));
             while tenth < 10 && done * 10 >= bytes * tenth {
                 tenth += 1;
             }
         }
     }
-    target.sync_all().map_err(writing)
+    drive.sync().map_err(writing)
 }
 
 /// Copies a file, making the folders it goes into.
@@ -426,17 +472,14 @@ pub fn copy_file(from: &Path, to: &Path) -> Result<(), String> {
         .map_err(|e| format!("Could not copy {} to {}: {e}", from.display(), to.display()))
 }
 
-/// 16 random bytes from the kernel.
+/// 16 random bytes from the system.
 ///
 /// # Errors
 ///
-/// When `/dev/urandom` cannot be read.
-#[cfg(unix)]
+/// When the system has none to give.
 pub fn random() -> Result<[u8; 16], String> {
     let mut random = [0; 16];
-    File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut random))
-        .map_err(|e| format!("Could not get random numbers: {e}"))?;
+    getrandom::fill(&mut random).map_err(|e| format!("Could not get random numbers: {e}"))?;
     Ok(random)
 }
 
@@ -534,5 +577,10 @@ mod tests {
         );
         assert!(short.unwrap_err().starts_with("Could not read"));
         fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn random_bytes_differ() {
+        assert_ne!(random().unwrap(), random().unwrap());
     }
 }

@@ -1,11 +1,16 @@
 //! Partition tables: what sfdisk prints about one, and the table Eclipse writes onto a new drive.
 
+use std::fmt::Write as _;
+
 use serde::Deserialize;
 
 use super::{
     BASIC_DATA_TYPE, ESP_SIZE, ESP_TYPE, LINUX_TYPE, MIB, SECTOR, STORE_SIZE, USR_TYPE,
     USR_VERITY_TYPE, VERITY_SIZE,
 };
+
+/// What partitions are aligned to, in sectors: 1 MiB, where the first one starts.
+pub const ALIGN: u64 = MIB / SECTOR;
 
 /// A partition in what `sfdisk --json` printed, or in a table read from an image.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -30,6 +35,9 @@ pub struct Partition {
 /// A partition table.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Table {
+    /// The disk's GUID, in upper case.
+    #[serde(default)]
+    pub id: Option<String>,
     /// The size of a sector in bytes.
     #[serde(default = "sector")]
     pub sectorsize: u64,
@@ -131,6 +139,92 @@ pub fn script(slot: &Slot, exchange: Option<u64>) -> String {
     lines.join("\n") + "\n"
 }
 
+/// The table of a new drive written without sfdisk, each partition where sfdisk puts it for
+/// [`script`]: the esp, `slot` as slot A, an empty slot B, and the exchange partition when it has
+/// `exchange` bytes. There is no persist: the space after the last partition is left for the drive
+/// to make it in. `random` gives the bytes of each new uuid.
+#[must_use]
+pub fn plan(slot: &Slot, exchange: Option<u64>, random: &mut impl FnMut() -> [u8; 16]) -> Table {
+    let mut partitions: Vec<Partition> = Vec::new();
+    let mut add = |kind: &str, bytes: u64, uuid: String, name: String, attrs: Option<String>| {
+        let start = partitions.last().map_or(ALIGN, |last| {
+            (last.start + last.size).div_ceil(ALIGN) * ALIGN
+        });
+        partitions.push(Partition {
+            node: (partitions.len() + 1).to_string(),
+            start,
+            size: bytes.div_ceil(SECTOR),
+            kind: kind.to_string(),
+            uuid: Some(uuid),
+            name: Some(name),
+            attrs,
+        });
+    };
+    add(
+        ESP_TYPE,
+        ESP_SIZE,
+        random_uuid(random()),
+        "esp".into(),
+        None,
+    );
+    for (partition, bytes) in [(&slot.verity, VERITY_SIZE), (&slot.store, STORE_SIZE)] {
+        let uuid = partition
+            .uuid
+            .clone()
+            .unwrap_or_else(|| random_uuid(random()));
+        add(
+            &partition.kind,
+            bytes,
+            uuid,
+            partition.name.clone().unwrap_or_default(),
+            partition.attrs.clone().filter(|attrs| !attrs.is_empty()),
+        );
+    }
+    add(
+        USR_VERITY_TYPE,
+        VERITY_SIZE,
+        random_uuid(random()),
+        "_empty".into(),
+        None,
+    );
+    add(
+        USR_TYPE,
+        STORE_SIZE,
+        random_uuid(random()),
+        "_empty".into(),
+        None,
+    );
+    if let Some(bytes) = exchange {
+        add(
+            BASIC_DATA_TYPE,
+            bytes.div_ceil(MIB) * MIB,
+            random_uuid(random()),
+            "exchange".into(),
+            None,
+        );
+    }
+    Table {
+        id: Some(random_uuid(random())),
+        sectorsize: SECTOR,
+        partitions,
+    }
+}
+
+/// A random uuid, version 4, in upper case, made of 16 random bytes.
+#[must_use]
+pub fn random_uuid(mut bytes: [u8; 16]) -> String {
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    let mut text = String::with_capacity(36);
+    for (index, byte) in bytes.iter().enumerate() {
+        if matches!(index, 4 | 6 | 8 | 10) {
+            text.push('-');
+        }
+        let _ = write!(text, "{byte:02X}");
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::GIB;
@@ -158,6 +252,15 @@ mod tests {
        }
     }"#;
 
+    fn slot() -> Slot {
+        let table = read_table(TABLE).unwrap();
+        Slot {
+            version: "0.2.0".into(),
+            verity: table.partitions[3].clone(),
+            store: table.partitions[4].clone(),
+        }
+    }
+
     #[test]
     fn sfdisk_tables_are_read_with_sizes_and_offsets() {
         let table = read_table(TABLE).unwrap();
@@ -170,17 +273,16 @@ mod tests {
             Some("GUID:60"),
             "{table:?}"
         );
+        assert_eq!(
+            table.id.as_deref(),
+            Some("B581FEF7-24ED-4F31-990B-099EC86BBA03")
+        );
         assert!(read_table("[]").is_err());
     }
 
     #[test]
     fn a_new_drive_gets_the_slot_as_slot_a_and_an_empty_slot_b() {
-        let table = read_table(TABLE).unwrap();
-        let slot = Slot {
-            version: "0.2.0".into(),
-            verity: table.partitions[3].clone(),
-            store: table.partitions[4].clone(),
-        };
+        let slot = slot();
         assert_eq!(
             script(&slot, None),
             "label: gpt\n\
@@ -205,5 +307,76 @@ mod tests {
                 .lines()
                 .any(|line| line.starts_with("size=1025MiB, type=EBD0A0A2"))
         );
+    }
+
+    #[test]
+    fn a_planned_table_puts_each_partition_where_sfdisk_puts_it() {
+        let slot = slot();
+        let mut count = 0_u8;
+        let mut random = || {
+            count += 1;
+            [count; 16]
+        };
+        let table = plan(&slot, Some(GIB), &mut random);
+        // where sfdisk put them for the same script on a 24G file, with an exchange partition of 1G
+        let placed: Vec<(u64, u64)> = table
+            .partitions
+            .iter()
+            .map(|partition| (partition.start, partition.size))
+            .collect();
+        assert_eq!(
+            placed,
+            [
+                (2048, 2_097_152),
+                (2_099_200, 2_097_152),
+                (4_196_352, 16_777_216),
+                (20_973_568, 2_097_152),
+                (23_070_720, 16_777_216),
+                (39_847_936, 2_097_152)
+            ]
+        );
+        let names: Vec<&str> = table
+            .partitions
+            .iter()
+            .map(|partition| partition.name.as_deref().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "esp",
+                "store-verity_0.2.0",
+                "store_0.2.0",
+                "_empty",
+                "_empty",
+                "exchange"
+            ]
+        );
+        assert_eq!(table.partitions[1].uuid, slot.verity.uuid);
+        assert_eq!(table.partitions[1].attrs.as_deref(), Some("GUID:60"));
+        assert_eq!(table.partitions[2].uuid, slot.store.uuid);
+        assert_eq!(table.partitions[2].attrs, None);
+        assert_eq!(table.partitions[5].kind, BASIC_DATA_TYPE);
+        // every new uuid is a different one
+        assert_eq!(
+            table.partitions[0].uuid.as_deref(),
+            Some("01010101-0101-4101-8101-010101010101")
+        );
+        assert_eq!(
+            table.id.as_deref(),
+            Some("05050505-0505-4505-8505-050505050505")
+        );
+        assert_eq!(plan(&slot, None, &mut || [0; 16]).partitions.len(), 5);
+        // an exchange partition that is not whole MiB rounds up
+        let odd = plan(&slot, Some(GIB + 1), &mut || [0; 16]);
+        assert_eq!(odd.partitions[5].size, 2_099_200);
+    }
+
+    #[test]
+    fn random_uuids_are_version_4() {
+        assert_eq!(
+            random_uuid([0xFF; 16]),
+            "FFFFFFFF-FFFF-4FFF-BFFF-FFFFFFFFFFFF"
+        );
+        assert_eq!(random_uuid([0; 16]), "00000000-0000-4000-8000-000000000000");
     }
 }

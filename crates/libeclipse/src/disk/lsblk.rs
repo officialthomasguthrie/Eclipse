@@ -2,7 +2,7 @@
 
 use serde::Deserialize;
 
-use super::{SECTOR, size};
+use super::guard::{Bus, Disk, Volume, reported};
 
 /// What lsblk is asked about a disk and everything on it.
 pub const LSBLK: &str =
@@ -108,46 +108,52 @@ fn in_use(block: &Block) -> Option<String> {
     })
 }
 
+impl Block {
+    /// The disk as the rules see it. `running` holds the names of the disks the running system is
+    /// on.
+    #[must_use]
+    pub fn disk(&self, running: &[String]) -> Disk {
+        Disk {
+            name: self.name.clone(),
+            path: self.path.clone(),
+            whole: self.kind == "disk",
+            running: running.contains(&self.name),
+            bus: if self.tran.as_deref() == Some("usb") {
+                Bus::Usb
+            } else if self.rm {
+                Bus::Removable
+            } else {
+                Bus::Inside
+            },
+            read_only: self.ro,
+            sector: self.log_sec,
+            size: self.size,
+            model: reported(self.model.as_deref()),
+            serial: reported(self.serial.as_deref()),
+            volumes: self
+                .children
+                .iter()
+                .map(|child| Volume {
+                    path: child.path.clone(),
+                    name: reported(child.partlabel.as_deref())
+                        .unwrap_or_else(|| child.name.clone()),
+                    fs: child.fstype.clone(),
+                    mounted: child.mountpoints.iter().flatten().next().cloned(),
+                })
+                .collect(),
+        }
+    }
+}
+
 /// Refuses a disk a drive must not be written onto. `running` holds the names of the disks the
-/// running system is on, `needed` the bytes the drive needs.
+/// running system is on, `needed` the bytes the drive needs. Nothing is unmounted or closed on Linux,
+/// so a disk with anything in use on it is refused too.
 ///
 /// # Errors
 ///
 /// The sentence that says why the disk is refused.
 pub fn refuse(disk: &Block, running: &[String], needed: u64) -> Result<(), String> {
-    let path = &disk.path;
-    if disk.kind != "disk" {
-        return Err(format!(
-            "{path} is not a whole disk. Give the disk itself, not a partition or a device on it."
-        ));
-    }
-    if running.contains(&disk.name) {
-        return Err(format!("{path} is the drive this system runs from."));
-    }
-    if !(disk.rm || disk.tran.as_deref() == Some("usb")) {
-        return Err(format!(
-            "{path} is neither removable nor on USB. Eclipse is only written onto a stick or a USB disk, so a disk inside a computer is never erased."
-        ));
-    }
-    if disk.ro {
-        return Err(format!("{path} is read only."));
-    }
-    if let Some(why) = in_use(disk) {
-        return Err(format!("{why}. Unmount or close it first."));
-    }
-    if let Some(bytes) = disk.log_sec.filter(|&bytes| bytes != SECTOR) {
-        return Err(format!(
-            "{path} has sectors of {bytes} bytes, and the system partitions are made for sectors of {SECTOR}."
-        ));
-    }
-    if disk.size < needed {
-        return Err(format!(
-            "{path} holds {}, and Eclipse needs {}.",
-            size(disk.size),
-            size(needed)
-        ));
-    }
-    Ok(())
+    disk.disk(running).refuse(needed, in_use(disk).as_deref())
 }
 
 fn serial_of(disk: &Block) -> Option<&str> {
@@ -160,42 +166,7 @@ fn serial_of(disk: &Block) -> Option<&str> {
 /// What a person is shown about the disk before it is erased.
 #[must_use]
 pub fn describe(disk: &Block) -> Vec<String> {
-    let mut about = vec![disk.path.clone()];
-    if let Some(model) = disk
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|m| !m.is_empty())
-    {
-        about.push(model.to_string());
-    }
-    about.push(size(disk.size));
-    if let Some(serial) = serial_of(disk) {
-        about.push(format!("serial {serial}"));
-    }
-    let parts: Vec<String> = disk
-        .children
-        .iter()
-        .map(|child| {
-            let name = child
-                .partlabel
-                .as_deref()
-                .filter(|label| !label.is_empty())
-                .unwrap_or(&child.name);
-            match child.fstype.as_deref() {
-                Some(fstype) => format!("{name} ({fstype})"),
-                None => name.to_string(),
-            }
-        })
-        .collect();
-    vec![
-        format!("{}.", about.join(", ")),
-        if parts.is_empty() {
-            "It has no partitions.".to_string()
-        } else {
-            format!("It holds {}.", parts.join(", "))
-        },
-    ]
+    disk.disk(&[]).describe()
 }
 
 /// What has to be typed back before the disk is erased: its serial, or its name when it has none.

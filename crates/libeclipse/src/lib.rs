@@ -3,7 +3,8 @@
 //! written.
 //!
 //! Apache-2.0 so other people can embed it. Keep it dependency free: only the `bus` feature,
-//! which the asking side of the bus turns on, brings in zbus, and only the `disk` feature serde.
+//! which the asking side of the bus turns on, brings in zbus, and only the `disk` feature serde and
+//! getrandom.
 
 pub mod aura;
 pub mod bus;

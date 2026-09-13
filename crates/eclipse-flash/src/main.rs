@@ -1,19 +1,29 @@
 //! eclipse-flash: writes Eclipse onto a stick or a USB disk from a system image. `list` shows the
-//! disks it can write onto, `write` erases one and puts the system, an empty slot for the next
-//! update and an encrypted persist onto it. It refuses a disk inside the computer, the disk the
-//! running system is on, and a disk that is in use. Linux for now, macOS and Windows next.
+//! disks it can write onto, `write` erases one and puts the system and an empty slot for the next
+//! update onto it. On Linux it makes the encrypted persist too; a drive written on macOS or Windows
+//! makes persist at its first boot. It refuses a disk inside the computer, the disk the running
+//! system is on, and a disk that is in use.
 
+mod direct;
 mod drive;
 mod image;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(test)]
+mod sample;
+#[cfg(windows)]
+mod windows;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+#[cfg(target_os = "linux")]
 const USAGE: &str = "Usage: eclipse-flash list
        sudo eclipse-flash write [--exchange <size>] [--models <folder>] [--serial <serial>] <image> <disk>";
 
+#[cfg(target_os = "linux")]
 const HELP: &str = "Writes Eclipse onto a stick or a USB disk: the system in the image, an empty slot \
 for the next update, and persist, encrypted with a passphrase you choose. Everything on the disk is \
 erased, so eclipse-flash shows the disk first and asks you to type its serial. It refuses a disk \
@@ -30,6 +40,50 @@ Options for write:
   --exchange <size>  Add a partition of this size that Windows and macOS can read, like 8G
   --models <folder>  Copy the model files in this folder onto the drive
   --serial <serial>  The disk's serial, given instead of typed";
+
+#[cfg(target_os = "macos")]
+const USAGE: &str = "Usage: eclipse-flash list
+       sudo eclipse-flash write [--exchange <size>] [--serial <name>] <image> <disk>";
+
+#[cfg(target_os = "macos")]
+const HELP: &str = "Writes Eclipse onto a stick or a USB disk: the system in the image and an empty \
+slot for the next update. The drive makes persist, encrypted with a passphrase you choose, when it \
+first starts. Everything on the disk is erased, so eclipse-flash shows the disk first and asks you to \
+type its name. It refuses a disk inside the Mac, the disk macOS runs from, and a disk image that is \
+in use, and it unmounts the stick before it writes. The image is a .raw or .raw.zst file. For a \
+virtual machine the disk can be an empty file instead, made with mkfile -n 24g <file>. Without a \
+terminal, give the name with --serial.
+
+Commands:
+  list               Show the sticks and USB disks that are plugged in
+  write              Erase a disk and write Eclipse onto it
+
+Options for write:
+  --exchange <size>  Add a partition of this size that Windows and macOS can read, like 8G
+  --serial <name>    The disk's name, like disk4, given instead of typed";
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+const USAGE: &str = "Usage: eclipse-flash list
+       eclipse-flash write [--exchange <size>] [--serial <serial>] <image> <disk>";
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+const HELP: &str = "Writes Eclipse onto a stick or a USB disk: the system in the image and an empty \
+slot for the next update. The drive makes persist, encrypted with a passphrase you choose, when it \
+first starts. Everything on the disk is erased, so eclipse-flash shows the disk first and asks you to \
+type its serial. It refuses a disk inside the computer, the disk Windows runs from, and a virtual \
+disk that is in use, and it removes the partitions on the stick before it writes. Writing needs a \
+terminal opened with Run as administrator. A disk is named the way Windows numbers it, like \
+PhysicalDrive2, and eclipse-flash list shows the names. The image is a .raw or .raw.zst file. For a \
+virtual machine the disk can be an empty file instead, made with fsutil file createnew <file> \
+25769803776. Without a terminal, give the serial with --serial.
+
+Commands:
+  list               Show the sticks and USB disks that are plugged in
+  write              Erase a disk and write Eclipse onto it
+
+Options for write:
+  --exchange <size>  Add a partition of this size that Windows and macOS can read, like 8G
+  --serial <serial>  The disk's serial, or its name when it has none, given instead of typed";
 
 /// What `write` was asked to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,18 +142,45 @@ fn run(command: &Command) -> Result<(), String> {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(target_os = "macos", windows))]
 fn run(command: &Command) -> Result<(), String> {
-    // the image reads the same everywhere, only the writer is missing here
-    if let Command::Write(request) = command {
-        let image = image::Image::open(&request.image)?;
-        return Err(format!(
-            "{} holds Eclipse {}. eclipse-flash cannot write a drive on this system yet.",
-            request.image.display(),
-            image.slot.version
-        ));
+    #[cfg(target_os = "macos")]
+    let system = macos::Mac::query()?;
+    #[cfg(windows)]
+    let system = windows::Windows::query()?;
+    match command {
+        Command::List => {
+            for line in direct::list(&system) {
+                println!("{line}");
+            }
+            Ok(())
+        }
+        Command::Write(request) => {
+            direct::write(request, &system, &mut ask, &mut |line| println!("{line}"))
+        }
+        Command::Help | Command::Version => Ok(()),
     }
-    Err("eclipse-flash cannot list the disks of this system yet.".into())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn run(_: &Command) -> Result<(), String> {
+    Err("eclipse-flash cannot write a drive on this system.".into())
+}
+
+/// A line typed on the terminal after `question`, or nothing when there is no terminal.
+#[cfg(any(target_os = "macos", windows))]
+fn ask(question: &str) -> Option<String> {
+    use std::io::{BufRead, IsTerminal, Write};
+
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        return None;
+    }
+    eprint!("{question}");
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    stdin.lock().read_line(&mut line).ok()?;
+    Some(line.trim_end_matches(['\n', '\r']).to_string())
 }
 
 fn parse(args: &[String]) -> Result<Command, String> {

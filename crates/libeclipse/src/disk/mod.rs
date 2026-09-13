@@ -1,17 +1,24 @@
-//! Drives: the layout Eclipse writes onto a disk, what lsblk and sfdisk say about disks, which disks
-//! may be erased, and the programs that write one. Vault's clone and eclipse-flash both write drives
-//! through this.
+//! Drives: the layout Eclipse writes onto a disk, what lsblk, sfdisk, diskutil and Get-Disk say about
+//! disks, which disks may be erased, and the programs that write one. Vault's clone and eclipse-flash
+//! both write drives through this.
 //!
-//! Behind the `disk` feature, which brings in serde for what lsblk and sfdisk print.
+//! Behind the `disk` feature, which brings in serde for what those programs print and getrandom.
 
+mod diskutil;
+mod getdisk;
 mod gpt;
+mod guard;
 mod lsblk;
+mod plist;
 pub mod run;
 mod table;
 
-pub use gpt::{GPT_BYTES, read_gpt};
+pub use diskutil::{read_diskutil, read_diskutil_info};
+pub use getdisk::{GET_DISK, read_get_disk};
+pub use gpt::{GPT_BYTES, Gpt, read_gpt, write_gpt};
+pub use guard::{Bus, Disk, Volume};
 pub use lsblk::{Block, LSBLK, confirmation, describe, disks_in, read_blocks, read_lsblk, refuse};
-pub use table::{Partition, Slot, Table, read_table, script};
+pub use table::{ALIGN, Partition, Slot, Table, plan, random_uuid, read_table, script};
 
 /// A mebibyte.
 pub const MIB: u64 = 1 << 20;

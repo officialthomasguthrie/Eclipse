@@ -19,8 +19,8 @@ libeclipse = { workspace = true, features = ["disk"] }
 # images compressed with zstd, in rust, so no system needs a c compiler to build this
 ruzstd = "0.8"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-# whether it runs as root, and a passphrase typed without echo, without unsafe code
+[target.'cfg(unix)'.dependencies]
+# whether it runs as root, and on linux a passphrase typed without echo, without unsafe code
 rustix = { version = "1.1", default-features = false, features = ["process", "std", "termios"] }
 
 [lints]

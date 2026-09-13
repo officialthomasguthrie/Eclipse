@@ -2,20 +2,20 @@
 //! steps, through the same programs Vault's clone runs.
 
 use std::fs::{self, OpenOptions, Permissions};
-use std::io::{self, BufRead, IsTerminal, Read, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::os::unix::fs::{FileTypeExt, PermissionsExt, chown};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use libeclipse::disk::run::{self, Loop, Persist, copy, copy_file, feed, on_path, settle, tool};
 use libeclipse::disk::{
-    Block, GPT_BYTES, LSBLK, MACHINE_ID, OWNER, Partition, SUBVOLUMES, Table, confirmation,
-    describe, disks_in, machine_id, needed, partition_node, passphrase_problem, read_blocks,
-    read_lsblk, read_table, refuse, script, size,
+    Block, LSBLK, MACHINE_ID, OWNER, Partition, SUBVOLUMES, Table, confirmation, describe,
+    disks_in, machine_id, needed, partition_node, passphrase_problem, read_blocks, read_lsblk,
+    read_table, refuse, script, size,
 };
 
 use crate::Request;
-use crate::drive::{check_table, is_empty, models_in};
+use crate::drive::{check_file, check_table, models_in};
 use crate::image::{Image, Reader};
 
 /// The programs every write runs, looked for before anything is erased.
@@ -250,37 +250,6 @@ fn inspect(request: &Request) -> Result<Plan, String> {
         exchange: request.exchange,
         models,
     })
-}
-
-/// Refuses a file a drive must not be written into: one that is too small, or holds anything at its
-/// start. Returns its size.
-fn check_file(path: &Path, need: u64) -> Result<u64, String> {
-    let shown = path.display();
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
-        .map_err(|e| format!("Could not open {shown} to write it: {e}"))?;
-    let bytes = file
-        .metadata()
-        .map_err(|e| format!("Could not look at {shown}: {e}"))?
-        .len();
-    if bytes < need {
-        return Err(format!(
-            "{shown} holds {}, and Eclipse needs {}.",
-            size(bytes),
-            size(need)
-        ));
-    }
-    let mut start = vec![0; GPT_BYTES];
-    file.read_exact(&mut start)
-        .map_err(|e| format!("Could not read {shown}: {e}"))?;
-    if !is_empty(&start) {
-        return Err(format!(
-            "{shown} is not empty, and eclipse-flash only writes into an empty file. Make one with truncate -s 24G <file>."
-        ));
-    }
-    Ok(bytes)
 }
 
 /// The names of the disks the running system is on, found from the sources and the device numbers

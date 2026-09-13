@@ -3,10 +3,50 @@
 
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use libeclipse::disk::{GIB, MIB, Slot, Table, size};
+use libeclipse::disk::{GIB, GPT_BYTES, MIB, Slot, Table, size};
+
+/// Refuses a file a drive must not be written into: one that is too small, or holds anything at its
+/// start. Returns its size.
+pub fn check_file(path: &Path, need: u64) -> Result<u64, String> {
+    let shown = path.display();
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("Could not open {shown} to write it: {e}"))?;
+    let bytes = file
+        .metadata()
+        .map_err(|e| format!("Could not look at {shown}: {e}"))?
+        .len();
+    if bytes < need {
+        return Err(format!(
+            "{shown} holds {}, and Eclipse needs {}.",
+            size(bytes),
+            size(need)
+        ));
+    }
+    let mut start = vec![0; GPT_BYTES];
+    file.read_exact(&mut start)
+        .map_err(|e| format!("Could not read {shown}: {e}"))?;
+    if !is_empty(&start) {
+        return Err(format!(
+            "{shown} is not empty, and eclipse-flash only writes into an empty file. Make one with {MAKE_FILE}."
+        ));
+    }
+    Ok(bytes)
+}
+
+/// How a person makes an empty file of 24G for a drive on this system.
+#[cfg(target_os = "linux")]
+const MAKE_FILE: &str = "truncate -s 24G <file>";
+#[cfg(target_os = "macos")]
+const MAKE_FILE: &str = "mkfile -n 24g <file>";
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+const MAKE_FILE: &str = "fsutil file createnew <file> 25769803776";
 
 /// The least an exchange partition gets.
 const LEAST_EXCHANGE: u64 = 64 * MIB;
