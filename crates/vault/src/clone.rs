@@ -376,7 +376,8 @@ pub struct Verity {
 }
 
 /// The data device, the hash device and the size in what `veritysetup status` printed. The size is
-/// in sectors of 512 bytes, and nothing past it is ever read.
+/// in sectors of 512 bytes, `12163072 [512-byte units] (6227492864 [bytes])` or `12163072 sectors`
+/// in older versions, and nothing past it is ever read.
 pub fn read_veritysetup(status: &str) -> Option<Verity> {
     let field = |name: &str| {
         status.lines().find_map(|line| {
@@ -386,11 +387,7 @@ pub fn read_veritysetup(status: &str) -> Option<Verity> {
                 .map(str::trim)
         })
     };
-    let sectors: u64 = field("size")?
-        .strip_suffix("sectors")?
-        .trim()
-        .parse()
-        .ok()?;
+    let sectors: u64 = field("size")?.split_whitespace().next()?.parse().ok()?;
     let data = field("data device")?;
     let hash = field("hash device")?;
     if sectors == 0 || !data.starts_with("/dev/") || !hash.starts_with("/dev/") {
@@ -1351,21 +1348,21 @@ mod tests {
         assert_eq!(os_release("IMAGE_IDX=eclipse\nIMAGE_VERSION=0.1.0\n"), None);
     }
 
-    /// What `veritysetup status usr` prints for slot b's store.
-    const STATUS: &str = "/dev/mapper/usr is active and is in use.\n\
-          type:        VERITY\n\
-          status:      verified\n\
-          hash type:   1\n\
-          data block:  512\n\
-          hash block:  512\n\
-          hash name:   sha256\n\
-          salt:        5a1e0f0c3b6d4e8fa2c1b0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9\n\
-          data device: /dev/nvme0n1p5\n\
-          size:        12163072 sectors\n\
-          mode:        readonly\n\
-          hash device: /dev/nvme0n1p4\n\
-          hash offset: 1 sectors\n\
-          root hash:   0e5c6a7d8b9f0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293\n\
+    /// What cryptsetup 2.8.7's `veritysetup status usr` prints for slot b's store.
+    const STATUS: &str = "/dev/mapper/usr is active and is in use.\n  \
+          type:        VERITY\n  \
+          status:      verified\n  \
+          hash type:   1\n  \
+          data block:  512 [bytes]\n  \
+          hash block:  512 [bytes]\n  \
+          hash name:   sha256\n  \
+          salt:        5a1e0f0c3b6d4e8fa2c1b0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9\n  \
+          data device: /dev/nvme0n1p5\n  \
+          size:        12163072 [512-byte units] (6227492864 [bytes])\n  \
+          mode:        readonly\n  \
+          hash device: /dev/nvme0n1p4\n  \
+          hash offset: 1 [512-byte units] (512 [bytes])\n  \
+          root hash:   0e5c6a7d8b9f0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293\n  \
           flags:       panic_on_corruption\n";
 
     #[test]
@@ -1379,9 +1376,18 @@ mod tests {
             })
         );
         assert_eq!(size(12_163_072 * 512), "5.8 GiB");
+        // older versions print the size as sectors
+        let older = STATUS.replace(
+            "12163072 [512-byte units] (6227492864 [bytes])",
+            "12163072 sectors",
+        );
+        assert_eq!(read_veritysetup(&older), read_veritysetup(STATUS));
         // the hash offset and the data block are not the size or the devices
         assert_eq!(
-            read_veritysetup(&STATUS.replace("size:        12163072 sectors\n", "")),
+            read_veritysetup(&STATUS.replace(
+                "size:        12163072 [512-byte units] (6227492864 [bytes])\n",
+                ""
+            )),
             None
         );
         assert_eq!(
@@ -1391,7 +1397,7 @@ mod tests {
             None
         );
         assert_eq!(
-            read_veritysetup(&STATUS.replace("12163072 sectors", "0 sectors")),
+            read_veritysetup(&STATUS.replace("12163072 [512", "0 [512")),
             None
         );
         assert_eq!(read_veritysetup("/dev/mapper/usr is inactive.\n"), None);
