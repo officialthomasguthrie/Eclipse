@@ -1,6 +1,7 @@
 # vault: timeline snapshots of home, rustic backups, drive cloning. vault serve answers on the
 # system bus as dev.eclipse.Vault and a timer takes a snapshot every hour. backups go to a folder on
-# another disk that sudo vault target chooses. cloning comes later
+# another disk that sudo vault target chooses. sudo eclipse clone writes a second drive onto a
+# removable disk, as root in the terminal, not through the service
 {
   config,
   lib,
@@ -66,6 +67,10 @@ in
     environment.systemPackages = with pkgs; [
       rustic
       btrfs-progs
+      # a clone makes the new drive's esp, exchange and persist
+      cryptsetup
+      dosfstools
+      exfatprogs
     ];
     # usb flash lies about its health, scrub monthly
     services.btrfs.autoScrub = {

@@ -666,7 +666,7 @@ fn rustic(args: &[OsString]) -> Result<String, String> {
 }
 
 /// Runs a program that has to succeed and returns what it printed.
-fn tool(command: &mut Command) -> Result<String, String> {
+pub fn tool(command: &mut Command) -> Result<String, String> {
     let line = format!("{command:?}");
     let output = command
         .output()

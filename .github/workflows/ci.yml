@@ -229,10 +229,14 @@ jobs:
           # an empty disk for the backup step. vault finds it by the uuid mkfs gives it
           truncate -s 256M backup.img
           mkfs.ext4 -q -F -L backup backup.img
+          # the disk the clone goes onto. sparse, the clone fills about 7G of it, and the runner has
+          # more than 80G free
+          truncate -s 24G clone.img
+          df -h .
           printf 'eclipse-test' > pass.txt
           python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw pass.txt --models models/cache \
             --log serial.log --splash splash.png --desktop desktop.png --corona --updates updates.img \
-            --backup backup.img --timeout 1200
+            --backup backup.img --clone clone.img --timeout 1500
       - uses: actions/upload-artifact@v4
         if: always()
         continue-on-error: true

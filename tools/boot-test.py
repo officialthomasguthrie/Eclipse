@@ -4,6 +4,7 @@ runs this.
 
 Usage: boot-test.py <eclipse-vm> <image.raw> <passfile> [--models dir] [--timeout 600] [--log serial.log]
        [--splash splash.png] [--desktop desktop.png] [--corona] [--updates updates.img] [--backup backup.img]
+       [--clone clone.img]
 
 <eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It adds slot b and the
 persist partition to the image with the passphrase from the passfile (persist-image.sh, through sudo),
@@ -25,6 +26,17 @@ again. `eclipse backup now` backs up home; vault mounts the disk by its uuid by 
 changed and another deleted, and both come back from the backup through `eclipse backup restore` the
 way they do from a snapshot. Then the test mounts the disk again: rustic refuses the repository with a
 wrong password and opens it with the printed one, and grep finds the file's text in none of its files.
+
+Clone: with --clone the vm gets an empty scsi disk that says it is removable. Last of all the test
+writes a file to home and runs `sudo eclipse clone`. Vault refuses the drive the system runs from, the
+backup drive, which is not removable, and a serial that is not the disk's, and writes nothing. Then it
+clones onto the removable disk with a passphrase of its own. Slot a of the clone holds the running
+version under the running slot's uuids and its store matches the usrhash, slot b is empty, the first
+drive's passphrase does not open the clone's persist, and the first drive's header over the clone's
+data reads as no file system, so the two volume keys differ. After the poweroff qemu starts again with
+only the clone. Its luks prompt refuses the first drive's passphrase and takes the clone's, the file is
+in home, and the clone boots the version it was made from, from its own esp and slot a, with a machine
+id of its own and none of the first drive's snapshots.
 
 The slots: systemd-boot started the uki with a boot counter in its name, the boot reached
 boot-complete.target and the counter is gone, systemd-sysupdate lists the running version as
@@ -227,6 +239,8 @@ LOCK_RING = 2
 # the owner's password from nix/profiles/base.nix, and one that is not it
 PASSWORD = "eclipse"
 WRONG_PASSWORD = "wrongpassword"
+# the passphrase the test gives the clone's persist, not the first drive's
+CLONE_PASSPHRASE = "clone-test-5213"
 # gpt partition types from the discoverable partitions specification: the esp, /usr on x86-64 and
 # its verity data. slot a and slot b each have a store and a verity partition
 ESP_TYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
@@ -520,6 +534,8 @@ def main():
     ap.add_argument("--updates", help="an ext4 image labelled updates with a newer version's update files, "
                     "install them and reboot into that version")
     ap.add_argument("--backup", help="an empty ext4 image labelled backup, back up home onto it and restore from it")
+    ap.add_argument("--clone", help="an empty file of at least 24G, clone the drive onto it as a removable disk "
+                    "and boot the clone")
     args = ap.parse_args()
     with open(args.passfile, encoding="utf-8") as f:
         passphrase = f.read()
@@ -554,12 +570,20 @@ def main():
         # and one for backups. vault mounts it by the uuid of its file system
         cmd += ["-drive", f"if=none,id=backup,format=raw,file={os.path.abspath(args.backup)}",
                 "-device", "nvme,drive=backup,serial=backup"]
+    if args.clone:
+        # and the disk the clone goes onto: a scsi disk that says it is removable, the way a stick in a
+        # card reader does, since vault clones onto nothing else. zeros written to it stay holes in the file
+        cmd += ["-device", "virtio-scsi-pci,id=scsi",
+                "-drive", f"if=none,id=clone,format=raw,discard=unmap,detect-zeroes=unmap,file={os.path.abspath(args.clone)}",
+                "-device", "scsi-hd,bus=scsi.0,drive=clone,serial=clone,removable=on"]
     print("boot-test: " + " ".join(cmd), flush=True)
 
     start = time.monotonic()
     deadline = start + args.timeout
     child = pexpect.spawn(cmd[0], cmd[1:], encoding="utf-8", codec_errors="replace", dimensions=(40, 160))
-    child.logfile_read = Tee(args.log)
+    # the clone boots in a second qemu, whose output goes on in the same log
+    tee = Tee(args.log)
+    child.logfile_read = tee
 
     def since():
         return f"{time.monotonic() - start:.0f}s"
@@ -1612,13 +1636,223 @@ def main():
             fail(f"the vm came back running {after} after {TRIES} failed boots, expected {new}")
         ok(f"{broken} failed {TRIES} boots and {new} started again from slot b, sysupdate still lists {broken}")
 
-    # 8. down
-    child.send("sudo systemctl poweroff\r")
-    try:
-        child.expect(pexpect.EOF, timeout=90)
-    except pexpect.TIMEOUT:
-        print("\nboot-test: poweroff did not end qemu, killing it", flush=True)
-        child.terminate(force=True)
+    # 8. the clone. the vm has an empty scsi disk that says it is removable, the way a card reader or
+    # a usb bridge does. eclipse clone refuses the drive this system runs from, a disk that is not
+    # removable and a serial that is not the disk's, then writes the running drive onto the removable
+    # disk with a passphrase of its own. before the vm goes down the test reads what it wrote: the
+    # partition table, the store against its verity tree and the luks header. step 10 boots it
+    if args.clone:
+        clone_letter = "/home/eclipse/clone/letter.txt"
+        clone_words = "Written before the clone 7051"
+        status, output = run(f"mkdir -p (dirname {clone_letter}); and printf '{clone_words}\\n' > {clone_letter}",
+                             "the file for the clone")
+        if status != 0:
+            fail(f"the file for the clone could not be written: {without_console(output).strip()!r}")
+        cloned = image_version()
+
+        def one_line(command, what, pattern):
+            """The first match of pattern in what a command printed."""
+            status, output = run(command, what)
+            found = re.search(pattern, without_console(output), re.M)
+            if status != 0 or not found:
+                fail(f"{what}: {command} exited with {status}: {without_console(output).strip()[-400:]!r}")
+            return found.group(1)
+
+        uuid = r"^\s*([0-9a-fA-F-]{8,36})\s*$"
+        boot = one_line("lsblk --noheadings --output PKNAME /dev/disk/by-designator/esp", "the boot drive", r"^\s*(\S+)\s*$")
+        esp_uuid = one_line("lsblk --noheadings --output UUID /dev/disk/by-designator/esp", "the esp's uuid", uuid)
+        machine = one_line("cat /etc/machine-id", "the machine id", r"^\s*([0-9a-f]{32})\s*$")
+        usrhash = one_line("cat /proc/cmdline", "the usrhash", r"usrhash=([0-9a-f]{64})")
+        store_uuid = one_line("lsblk --noheadings --output PARTUUID /dev/disk/by-designator/usr",
+                              "the store's partition uuid", uuid).lower()
+        verity_uuid = one_line("lsblk --noheadings --output PARTUUID /dev/disk/by-designator/usr-verity",
+                               "the verity partition's uuid", uuid).lower()
+        first_persist = one_line(f"lsblk --list --noheadings --output PATH,PARTLABEL /dev/{boot}",
+                                 "the persist partition of the boot drive", r"^\s*(\S+)\s+persist\s*$")
+        first_luks = one_line(f"sudo cryptsetup luksUUID {first_persist}", "the uuid of persist", uuid).lower()
+        first_snapshots = snapshot_list("before the clone")
+        key_hash = None
+        if args.backup:
+            key_hash = one_line("sudo sha256sum /var/lib/eclipse/vault/backup.key", "the hash of the backup password",
+                                r"^([0-9a-f]{64})\s")
+
+        # the disks by serial. the one removable disk is the clone's
+        _, output = run("lsblk --nodeps --bytes --pairs --output PATH,NAME,SERIAL,RM,TRAN,SIZE", "the disks of the vm")
+        printed = without_console(output)
+        print(f"\nboot-test: lsblk printed:\n{printed}", flush=True)
+        disks = [fields for fields in (dict(re.findall(r'(\w+)="([^"]*)"', line)) for line in printed.splitlines())
+                 if "PATH" in fields]
+        removable = [disk for disk in disks if disk.get("RM") == "1"]
+        if len(removable) != 1:
+            fail(f"the vm has {len(removable)} removable disks, expected the one for the clone")
+        target = removable[0]["PATH"]
+        serial = removable[0].get("SERIAL") or removable[0]["NAME"]
+        by_id = one_line(f"for link in /dev/disk/by-id/*; if test (realpath $link) = {target}; echo link=$link; end; end",
+                         "the clone's disk in /dev/disk/by-id", r"^link=(\S+)\s*$")
+
+        def clone_cli(disk, typed, what):
+            status, output = run(f"printf '%s\\n' '{CLONE_PASSPHRASE}' | sudo eclipse clone --serial '{typed}' {disk}", what)
+            printed = without_console(output)
+            print(f"\nboot-test: sudo eclipse clone --serial {typed} {disk} printed:\n{printed}", flush=True)
+            return status, printed
+
+        status, printed = clone_cli(f"/dev/{boot}", "eclipse", "a clone onto the drive this system runs from")
+        if status != 1 or "is the drive this system runs from." not in printed:
+            fail(f"eclipse clone onto the running drive exited with {status}, expected 1 and a refusal")
+        if args.backup:
+            backup_disk = next((disk["PATH"] for disk in disks if disk.get("SERIAL") == "backup"), None)
+            if not backup_disk:
+                fail("lsblk lists no disk with the serial backup")
+            status, printed = clone_cli(backup_disk, "backup", "a clone onto a disk that is not removable")
+            if status != 1 or "is neither removable nor on USB." not in printed:
+                fail(f"eclipse clone onto the backup disk exited with {status}, expected 1 and a refusal")
+        status, printed = clone_cli(by_id, f"not-{serial}", "a clone with a serial that is not the disk's")
+        if status != 1 or f"is not the serial of {target}. Nothing was written." not in printed:
+            fail(f"eclipse clone with a wrong serial exited with {status}, expected 1 and a refusal")
+        _, output = run(f"lsblk --noheadings --list --output NAME {target}", "the clone's disk after the refusals")
+        if len(without_console(output).split()) != 1:
+            fail(f"{target} has partitions after eclipse clone refused it: {without_console(output).strip()!r}")
+        ok("eclipse clone refused the running drive, a disk that is not removable and a wrong serial, and wrote nothing")
+
+        started = time.monotonic()
+        status, printed = clone_cli(by_id, serial, "eclipse clone")
+        took = time.monotonic() - started
+        if status != 0 or f"is a second drive now, with version {cloned} " not in printed:
+            fail(f"eclipse clone exited with {status}")
+        _, output = run("sudo ls -A /persist/@snapshots/clone", "the snapshots the clone sent")
+        if without_console(output).strip():
+            fail(f"the clone left snapshots behind: {without_console(output).strip()!r}")
+        ok(f"eclipse clone wrote {cloned} onto {target} ({by_id}) in {took:.0f}s")
+
+        # slot a holds the running version under the uuids its uki looks for, slot b is empty
+        _, output = run(f"sudo sfdisk --dump {target}", "the clone's partition table")
+        table = re.findall(r'^(\S+) : start=\s*\d+, size=\s*(\d+), type=([0-9A-Fa-f-]{36}), uuid=([0-9A-Fa-f-]{36}), '
+                           r'name="([^"]*)"', without_console(output), re.M)
+        print(f"\nboot-test: the clone's partitions: {table}", flush=True)
+        sectors = 1024**3 // 512
+        wanted = [("esp", ESP_TYPE, sectors), (f"store-verity_{cloned}", USR_VERITY_TYPE, sectors),
+                  (f"store_{cloned}", USR_TYPE, 8 * sectors), ("_empty", USR_VERITY_TYPE, sectors),
+                  ("_empty", USR_TYPE, 8 * sectors)]
+        if [(name, kind.lower(), int(size)) for _, size, kind, _, name in table[:5]] != wanted \
+                or len(table) != 6 or table[5][4] != "persist":
+            fail(f"the clone's partitions are {table}, expected {wanted} and then persist")
+        if (table[1][3].lower(), table[2][3].lower()) != (verity_uuid, store_uuid):
+            fail(f"the clone's slot a has the uuids {table[1][3]} and {table[2][3]}, the running slot "
+                 f"{verity_uuid} and {store_uuid}")
+        clone_verity, clone_store, clone_persist = table[1][0], table[2][0], table[5][0]
+        status, output = run(f"sudo veritysetup verify {clone_store} {clone_verity} {usrhash}",
+                             "the clone's store against its verity tree")
+        if status != 0:
+            fail(f"the clone's store does not match the usrhash: {without_console(output).strip()[-400:]!r}")
+        ok(f"the clone's slot a holds {cloned} under the running uuids, its store matches the usrhash, slot b is empty")
+
+        # persist. the first drive's passphrase does not open the clone's header and the clone's does.
+        # the first drive's header opens with its own passphrase over the clone's data, and what that
+        # reads is not a file system: the volume keys differ
+        header = "/run/first-persist.header"
+        status, _ = run(f"sudo rm -f {header}; and sudo cryptsetup luksHeaderBackup {first_persist} --header-backup-file {header}",
+                        "the first drive's luks header")
+        if status != 0:
+            fail("the first drive's luks header could not be saved")
+
+        def opens(options, secret, what, name=""):
+            status, _ = run(f"printf '%s' '{secret}' | sudo cryptsetup open {options} --key-file - {clone_persist} {name}", what)
+            return status == 0
+
+        def signature(name):
+            _, output = run(f"sudo blkid -p -o export /dev/mapper/{name}; sudo cryptsetup close {name}",
+                            f"what {name} reads as")
+            return without_console(output)
+
+        if opens("--test-passphrase", passphrase, "the clone's header with the first drive's passphrase"):
+            fail("the first drive's passphrase opens the clone's persist")
+        if not opens("--test-passphrase", CLONE_PASSPHRASE, "the clone's header with its own passphrase"):
+            fail("the passphrase the clone was made with does not open its persist")
+        if not opens(f"--readonly --header {header}", passphrase, "the clone's data under the first drive's header",
+                     "first-key"):
+            fail("the first drive's saved header does not open with its passphrase")
+        found = signature("first-key")
+        if re.search(r"^TYPE=", found, re.M):
+            fail(f"the clone's persist reads as {found!r} with the first drive's volume key")
+        if not opens("--readonly", CLONE_PASSPHRASE, "the clone's data under its own header", "clone-key"):
+            fail("the clone's persist does not open read only with its passphrase")
+        found = signature("clone-key")
+        if not re.search(r"^TYPE=btrfs\s*$", found, re.M) or not re.search(r"^LABEL=persist\s*$", found, re.M):
+            fail(f"the clone's persist is not the btrfs labelled persist: {found!r}")
+        clone_luks = one_line(f"sudo cryptsetup luksUUID {clone_persist}", "the uuid of the clone's persist", uuid).lower()
+        if clone_luks == first_luks:
+            fail(f"the clone's persist has the first drive's luks uuid {first_luks}")
+        ok(f"the clone's persist {clone_luks} opens only with its own passphrase and has a volume key of its own")
+
+    # 9. down
+    def power_off():
+        child.send("sudo systemctl poweroff\r")
+        try:
+            child.expect(pexpect.EOF, timeout=90)
+        except pexpect.TIMEOUT:
+            print("\nboot-test: poweroff did not end qemu, killing it", flush=True)
+            child.terminate(force=True)
+
+    power_off()
+
+    # 10. the clone by itself. qemu starts again with only the clone's disk as its drive. the first
+    # drive's passphrase is refused and the clone's opens it, the file from home is there, and the clone
+    # runs the version that ran when it was made, from its own esp and slot a
+    if args.clone:
+        child.close()
+        cmd = [
+            os.path.abspath(args.vm),
+            "--image", os.path.abspath(args.clone),
+            "-smp", "2",
+            "-m", args.memory,
+            "-device", "virtio-vga",
+            "-display", "none",
+            "-monitor", "none",
+            "-serial", "stdio",
+            "-no-reboot",
+        ]
+        print("\nboot-test: " + " ".join(cmd), flush=True)
+        child = pexpect.spawn(cmd[0], cmd[1:], encoding="utf-8", codec_errors="replace", dimensions=(40, 160))
+        child.logfile_read = tee
+        expect([PASSPHRASE], "the luks passphrase prompt of the clone")
+        ok("passphrase prompt of the clone")
+        child.send(passphrase + "\r")
+        if expect([PROMPT, PASSPHRASE], "the clone to answer the first drive's passphrase") == 0:
+            fail("the first drive's passphrase opened the clone")
+        ok("the clone refused the first drive's passphrase")
+        child.send(CLONE_PASSPHRASE + "\r")
+        if expect([PROMPT, PASSPHRASE], "the autologin shell on the clone") == 1:
+            fail("the clone refused the passphrase it was made with")
+        ok("shell on the clone")
+
+        if clone_words not in contents(clone_letter):
+            fail(f"{clone_letter} is not on the clone")
+        _, output = run(f"stat -c owner=%U:%a {clone_letter}", "the owner of the file on the clone")
+        if "owner=eclipse:644" not in output:
+            fail(f"the file on the clone is not the owner's own: {without_console(output).strip()!r}")
+        ok(f"{clone_letter} is on the clone, the owner's own")
+
+        after = check_slots(slot="a", counted=False)
+        if after != cloned:
+            fail(f"the clone runs {after}, expected {cloned}, the version that ran when it was made")
+        if one_line("lsblk --noheadings --output UUID /dev/disk/by-designator/esp", "the clone's esp uuid", uuid) == esp_uuid:
+            fail(f"the clone booted from an esp with the first drive's uuid {esp_uuid}")
+        if one_line("cat /etc/machine-id", "the clone's machine id", r"^\s*([0-9a-f]{32})\s*$") == machine:
+            fail(f"the clone has the first drive's machine id {machine}")
+        if one_line("sudo cryptsetup luksUUID /dev/disk/by-partlabel/persist", "the uuid of persist on the clone",
+                    uuid).lower() != clone_luks:
+            fail(f"the clone unlocked a persist that is not {clone_luks}")
+        _, output = run("sudo find /persist/@snapshots -mindepth 1 -maxdepth 2", "the snapshots on the clone")
+        carried = [name for name in first_snapshots if name in output]
+        if carried:
+            fail(f"the clone has the first drive's snapshots {carried}")
+        if key_hash and one_line("sudo sha256sum /var/lib/eclipse/vault/backup.key", "the backup password on the clone",
+                                 r"^([0-9a-f]{64})\s") != key_hash:
+            fail("the clone does not have the backup password of the first drive")
+        ok(f"the clone booted {cloned} from its own esp, with a machine id of its own, none of the first drive's "
+           f"snapshots{' and its backup password' if key_hash else ''}")
+        power_off()
+
     print(f"\nboot-test: PASSED in {since()}", flush=True)
 
 

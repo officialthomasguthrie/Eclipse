@@ -17,8 +17,9 @@ libeclipse.workspace = true
 # the system bus interface. blocking takes a snapshot or a restore off the bus's own threads
 zbus = { version = "5.18", default-features = false, features = ["async-io", "blocking-api"] }
 blocking = "1.6"
-# an flock on the snapshot directory, without unsafe code
-rustix = { version = "1.1", default-features = false, features = ["fs", "std", "termios"] }
+# an flock on the snapshot directory, how full persist is, and whether a clone runs as root,
+# without unsafe code
+rustix = { version = "1.1", default-features = false, features = ["fs", "process", "std", "termios"] }
 # the backup target, and what rustic and findmnt print with --json
 serde.workspace = true
 serde_json.workspace = true
