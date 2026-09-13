@@ -2,12 +2,45 @@
 //! device `/dev/rdiskN` opened, and the disk ejected after.
 
 use std::fs::{File, OpenOptions};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::process::Command;
 
-use libeclipse::disk::run::tool;
+use libeclipse::disk::run::{Drive, tool};
 use libeclipse::disk::{Disk, read_diskutil, read_diskutil_info};
 
 use crate::direct::System;
+
+/// A Mac's raw disk, `/dev/rdiskN`. Rust syncs a file on macOS with `F_FULLFSYNC`, which a raw disk
+/// refuses as an inappropriate ioctl; a plain fsync reaches it.
+pub struct Raw(File);
+
+impl Read for Raw {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Write for Raw {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl Seek for Raw {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        self.0.seek(to)
+    }
+}
+
+impl Drive for Raw {
+    fn sync(&mut self) -> io::Result<()> {
+        rustix::fs::fsync(&self.0).map_err(io::Error::from)
+    }
+}
 
 /// The Mac eclipse-flash runs on.
 pub struct Mac {
@@ -38,7 +71,7 @@ fn diskutil(args: &[&str]) -> Result<String, String> {
 }
 
 impl System for Mac {
-    type Opened = File;
+    type Opened = Raw;
 
     fn rights(&self) -> Option<&'static str> {
         (!self.root).then_some(
