@@ -1,8 +1,8 @@
 # penumbra: sandboxing. bwrap for eclipse run --sandbox, which penumbra runs unprivileged in a user
 # namespace, each sandbox in a scope of the user manager named for its app. penumbra serve answers on
 # the system bus as dev.eclipse.Penumbra and keeps the network switch for those apps in its own
-# nftables table. flatpak with portals for gui apps has its own switch until it is tested. no host
-# disk is visible to any sandbox.
+# nftables table. flatpak with its portals for gui apps has a switch of its own. no host disk is
+# visible to any sandbox.
 {
   config,
   lib,
@@ -90,7 +90,14 @@ in
       }
       (lib.mkIf cfg.flatpak.enable {
         services.flatpak.enable = true;
-        xdg.portal.enable = true;
+        # xdg-desktop-portal answers documents, the network monitor, proxies, trash and a few more
+        # by itself, over the session bus. gtk's backend is the rest: the file chooser, the app
+        # chooser, printing and the appearance settings, drawn in umbra's session
+        xdg.portal = {
+          enable = true;
+          extraPortals = [ pkgs.xdg-desktop-portal-gtk ];
+          config.common.default = [ "gtk" ];
+        };
       })
     ]
   );

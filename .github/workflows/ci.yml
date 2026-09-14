@@ -424,10 +424,11 @@ jobs:
           key: image-${{ github.sha }}
           fail-on-cache-miss: true
       - uses: DeterminateSystems/determinate-nix-action@v3
-      - name: Build the vm app and eclipse-flash
+      - name: Build the vm app, eclipse-flash and the test's flatpak
         run: |
           nix build .#vm -o vm -L
           nix build .#eclipse-flash -o flash -L
+          nix build .#test-flatpak -o test-flatpak -L
       - name: Install pexpect
         run: |
           sudo apt-get update >/dev/null
@@ -519,7 +520,7 @@ jobs:
           # the vm app writes the image onto a drive in a file with eclipse-flash and boots that
           python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw.zst pass.txt --models models/cache \
             --exchange 1G --log serial.log --splash splash.png --desktop desktop.png --corona \
-            --updates updates.img --backup backup.img --clone clone.img --timeout 1500
+            --updates updates.img --backup backup.img --clone clone.img --flatpak test-flatpak --timeout 1500
       - name: Boot a drive that makes persist at its first boot
         # eclipse-flash leaves persist out, the way it writes a drive on macos and windows. the drive
         # asks for a passphrase over serial, makes persist and formats its exchange partition, and the

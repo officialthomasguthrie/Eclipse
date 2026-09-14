@@ -559,6 +559,8 @@ def main():
     ap.add_argument("--backup", help="an empty ext4 image labelled backup, back up home onto it and restore from it")
     ap.add_argument("--clone", help="an empty file of at least 24G, clone the drive onto it as a removable disk "
                     "and boot the clone")
+    ap.add_argument("--flatpak", help="a directory with platform.flatpak and app.flatpak from nix build .#test-flatpak, "
+                    "install them and run the app with the portals")
     args = ap.parse_args()
     with open(args.passfile, encoding="utf-8") as f:
         passphrase = f.read()
@@ -1961,6 +1963,85 @@ def main():
     server.shutdown()
     ok("eclipse net refused a name that is not an app's, penumbra refused a start outside a sandbox's scope, "
        "nobody could not turn the switch, and fetcher's network came back")
+
+    # 6e. flatpak with portals. the test's own runtime and app, two bundles served from the host, go into
+    # the owner's installation. the app runs in flatpak's sandbox with the network and nothing of home:
+    # it reads a file of home only after the document portal exported it for that app, it asks the
+    # desktop portal about the network over the session bus, and the bus proxy keeps the rest of that
+    # bus from it. the serial shell has no graphical session, so the portals come up by bus activation
+    if args.flatpak:
+        app_id = "dev.eclipse.TestApp"
+        bundles = http.server.ThreadingHTTPServer(
+            ("127.0.0.1", 0), functools.partial(Quiet, directory=os.path.abspath(args.flatpak)))
+        threading.Thread(target=bundles.serve_forever, daemon=True).start()
+        base = f"http://10.0.2.2:{bundles.server_address[1]}"
+        status, output = run(f"mkdir -p ~/bundles; and curl -sf -o ~/bundles/platform.flatpak {base}/platform.flatpak; "
+                             f"and curl -sf -o ~/bundles/app.flatpak {base}/app.flatpak", "the flatpak bundles from the host")
+        bundles.shutdown()
+        if status != 0:
+            fail(f"the vm did not get the flatpak bundles from {base}: {without_console(output).strip()!r}")
+        for bundle in ("platform", "app"):
+            status, printed = sandboxed(f"flatpak install --user --noninteractive --bundle ~/bundles/{bundle}.flatpak",
+                                        f"installing the {bundle} bundle")
+            if status != 0:
+                fail(f"flatpak did not install the {bundle} bundle, it exited with {status}")
+        _, printed = sandboxed("flatpak list --user --columns=application,branch | cat", "the installed flatpaks")
+        for ref in ("dev.eclipse.TestPlatform", app_id):
+            if not re.search(rf"^{re.escape(ref)}\s+test\s*$", printed, re.M):
+                fail(f"flatpak list does not show {ref} on its test branch")
+        ok(f"flatpak installed dev.eclipse.TestPlatform and {app_id} for the owner from bundles")
+
+        # a file of home, exported for the app by the document portal. the app finds it under
+        # /run/flatpak/doc and not where it is
+        status, output = run(f"flatpak document-export --app={app_id} {secret}", "exporting a file of home for the app")
+        exported = re.search(r"^/run/user/\d+/doc/(\w+)/private\.txt\s*$", without_console(output), re.M)
+        if status != 0 or not exported:
+            fail(f"flatpak document-export exited with {status}: {without_console(output).strip()!r}")
+        document = f"/run/flatpak/doc/{exported.group(1)}/private.txt"
+        # xdg-desktop-portal starts only in a graphical session. umbra's on tty1 is the owner's too
+        status, output = run("systemctl --user is-active graphical-session.target", "whether umbra's session is up")
+        if status != 0:
+            fail("graphical-session.target is not active in the owner's user manager, so the desktop portal cannot "
+                 f"start: {without_console(output).strip()!r}")
+
+        def flatpak_app(options, what):
+            status, printed = sandboxed(f"flatpak run {options}{app_id} {document} {secret}", what)
+            if not said(printed, "finished"):
+                fail(f"the flatpak app exited with {status} before it finished")
+            return printed
+
+        printed = flatpak_app("", "the flatpak app")
+        if not said(printed, "document-read") or secret_words not in printed:
+            fail(f"the flatpak app could not read {document}, which the document portal exported for it")
+        if said(printed, "direct-read"):
+            fail(f"the flatpak app read {secret} where it is in home")
+        if not re.search(r"^\(true,\)\s*$", printed, re.M) or not said(printed, "portal-answered"):
+            _, output = run("systemctl --user status xdg-desktop-portal | cat", "the desktop portal's unit")
+            fail("the desktop portal did not tell the flatpak app that the network is there: "
+                 f"{without_console(output).strip()[-1500:]!r}")
+        if said(printed, "manager-answered"):
+            fail("the bus proxy let the flatpak app reach the user manager")
+        scope = re.search(rf"app-flatpak-{re.escape(app_id)}-\d+\.scope", printed)
+        if not scope:
+            fail("the flatpak app did not run in a scope of its own")
+        _, output = run("systemctl --user list-units --full --plain --no-legend 'xdg-*portal*' | cat", "the portals")
+        print(f"\nboot-test: the user manager runs {re.findall(r'xdg-[a-z-]+portal\.service', without_console(output))}",
+              flush=True)
+        ok(f"the flatpak app in {scope.group(0)} read {document} and not {secret}, the desktop portal said the "
+           "network is there, and the bus proxy kept the user manager from it")
+
+        # the portal asks what the app may do. without the network the network monitor does not answer it
+        printed = flatpak_app("--unshare=network ", "the flatpak app without the network")
+        if said(printed, "portal-answered") or "not available inside the sandbox" not in printed:
+            fail("the desktop portal told the flatpak app about the network while it had none")
+        # and the file is the app's only while it is exported
+        status, _ = run(f"flatpak document-unexport {secret}", "taking the file back from the app")
+        if status != 0:
+            fail(f"flatpak document-unexport exited with {status}")
+        printed = flatpak_app("", "the flatpak app after the file was taken back")
+        if said(printed, "document-read") or secret_words in printed:
+            fail(f"the flatpak app still read {document} after the document portal took it back")
+        ok("the network monitor refused the app without the network, and the app lost the file when it was unexported")
 
     # 7. the update. the second drive holds two newer versions' files. systemd-sysupdate checks them
     # against SHA256SUMS, writes the store and its verity partition into the free slot under the

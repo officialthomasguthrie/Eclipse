@@ -47,8 +47,9 @@
   eclipse.aura.enable = true;
   eclipse.umbra.enable = true;
   eclipse.corona.enable = true;
-  # bwrap for eclipse run --sandbox. flatpak stays off until the boot test runs an app with it
+  # bwrap for eclipse run --sandbox, and flatpak with its portals
   eclipse.penumbra.enable = true;
+  eclipse.penumbra.flatpak.enable = true;
   eclipse.vault.enable = true;
 
   environment.etc."eclipse/phase".text = "0\n";

@@ -183,7 +183,17 @@ in
     };
     # the lock screen. Mod+L runs it, and the listener runs it when logind signals the session,
     # which is what loginctl lock-session does. pam checks the owner's password
-    eclipse.umbra.startup = [ (lock ++ [ "--listen" ]) ];
+    eclipse.umbra.startup = [
+      (lock ++ [ "--listen" ])
+      # graphical-session.target, which user services of a graphical session need, xdg-desktop-portal
+      # among them. umbra runs in greetd's session and not as a unit of its own that would bind it
+      [
+        "${config.systemd.package}/bin/systemctl"
+        "--user"
+        "start"
+        "nixos-fake-graphical-session.target"
+      ]
+    ];
     security.pam.services.umbra-lock = { };
     # session files and XDG_DATA_DIRS for a greeter, nothing here reads them
     services.displayManager.enable = false;
