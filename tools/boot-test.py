@@ -1860,7 +1860,8 @@ def main():
     code, got = fetched(1)
     if code != 0 or net_words not in got:
         fail(f"the running sandbox did not reach the test server before its network was off, curl exited with {code}")
-    _, output = run("systemctl --user --no-pager list-units --plain --no-legend 'app-penumbra-fetcher-*'",
+    # into a pipe systemctl neither pages nor cuts the unit's name to the console's width
+    _, output = run("systemctl --user list-units --full --plain --no-legend 'app-penumbra-fetcher-*' | cat",
                     "the running sandbox's scope")
     units = re.findall(r"app-penumbra-fetcher-\d+\.scope", without_console(output))
     print(f"\nboot-test: the user manager lists {units}", flush=True)
