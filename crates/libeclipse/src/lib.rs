@@ -11,6 +11,7 @@ pub mod bus;
 #[cfg(feature = "disk")]
 pub mod disk;
 pub mod os;
+pub mod penumbra;
 pub mod syzygy;
 pub mod vault;
 
@@ -105,6 +106,8 @@ pub mod paths {
     pub const HOSTS: &str = "/var/lib/eclipse/hosts";
     /// Aura's index and action log.
     pub const AURA_STATE: &str = "/var/lib/eclipse/aura";
+    /// Which apps have their network off, kept by Penumbra.
+    pub const PENUMBRA_STATE: &str = "/var/lib/eclipse/penumbra";
     /// Phase marker written by the image.
     pub const PHASE: &str = "/etc/eclipse/phase";
 }

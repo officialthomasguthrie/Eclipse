@@ -1,12 +1,13 @@
-//! eclipse: the CLI. `host`, `ai`, `doctor`, `snapshot` and `backup` ask the same D-Bus services
-//! Corona uses, `clone` runs Vault as root, and `run --sandbox` runs Penumbra. The other commands
-//! are only a line in the help so far.
+//! eclipse: the CLI. `host`, `ai`, `doctor`, `snapshot`, `backup` and `net` ask the same D-Bus
+//! services Corona uses, `clone` runs Vault as root, and `run --sandbox` runs Penumbra. The other
+//! commands are only a line in the help so far.
 
 mod ai;
 mod backup;
 mod clone;
 mod doctor;
 mod host;
+mod net;
 mod restore;
 mod run;
 mod snapshot;
@@ -45,6 +46,11 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("ai", "Ask Aura a question from the terminal", "Phase 1"),
     ("run", "Run a command inside a Penumbra sandbox", "Phase 2"),
     (
+        "net",
+        "Turn the network off or on for an app in a sandbox",
+        "Phase 2",
+    ),
+    (
         "doctor",
         "Check the drive, the host, and the services",
         "Phase 1",
@@ -71,6 +77,7 @@ fn main() -> ExitCode {
         Some("backup") => backup::run(rest),
         Some("clone") => clone::run(rest),
         Some("run") => run::run(rest),
+        Some("net") => net::run(rest),
         Some(cmd) => {
             if let Some((name, what, phase)) = COMMANDS.iter().find(|(name, _, _)| *name == cmd) {
                 eprintln!("eclipse {name}: {what}. Not implemented yet ({phase}).");

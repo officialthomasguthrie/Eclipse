@@ -94,7 +94,9 @@ into the field, where the answer shows up as rows under it.
 """
 
 import argparse
+import functools
 import glob
+import http.server
 import json
 import math
 import os
@@ -103,6 +105,7 @@ import socket
 import struct
 import sys
 import tempfile
+import threading
 import time
 import tomllib
 import zlib
@@ -583,6 +586,9 @@ def main():
         "-monitor", "none",
         "-serial", "stdio",
         "-no-reboot",
+        # qemu's user network. the vm reaches the host's loopback at 10.0.2.2, where the network switch
+        # step runs a server of its own
+        "-nic", "user,model=virtio-net-pci",
     ]
     if args.qmp:
         cmd += ["-qmp", f"unix:{args.qmp},server,nowait"]
@@ -1784,6 +1790,175 @@ def main():
         if status not in (1, 2) or words not in " ".join(printed.split()):
             fail(f"{command} exited with {status} without saying {words!r}")
     ok("eclipse run refused /persist, a disk, all of home, root and a command without --sandbox")
+
+    # 6d. the network switch. penumbra keeps one for each app that runs in a sandbox, named after its
+    # command or by --name. off cuts the network of the app's sandboxes that run now and of every one it
+    # starts later, loopback included, and on gives it back. what is off stays off when penumbra starts
+    # again. the vm reaches a server this test runs on the host through qemu's user network, at 10.0.2.2
+    served = tempfile.mkdtemp(prefix="eclipse-net-")
+    net_words = "Reached the test server 2718"
+    with open(os.path.join(served, "net.txt"), "w", encoding="utf-8") as f:
+        f.write(net_words + "\n")
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=served))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://10.0.2.2:{server.server_address[1]}/net.txt"
+    fetch = f"curl -s -m 4 {url}"
+    fetcher = "/home/eclipse/fetcher"
+
+    def spaced(printed):
+        return " ".join(printed.split())
+
+    for _ in range(20):
+        status, output = run(fetch, "the test server from the vm")
+        if status == 0 and net_words in output:
+            break
+        time.sleep(3)
+    else:
+        _, output = run("ip -brief address; nmcli device", "the network of the vm")
+        fail(f"the vm does not reach the test server at {url}, curl exited with {status}: "
+             f"{without_console(output).strip()!r}")
+    status, output = run("systemctl is-active penumbra", "whether penumbra runs")
+    if status != 0:
+        fail(f"penumbra is not running: {without_console(output).strip()!r}")
+    status, printed = sandboxed("eclipse net", "the apps before any is off")
+    if status != 0 or "Every app has the network" not in spaced(printed):
+        fail(f"eclipse net exited with {status} before any app was off, or did not say every app has the network")
+    run(f"mkdir -p {fetcher}", "the folder for the fetching sandboxes")
+    status, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} --name fetcher {fetch}",
+                                "a sandbox that reaches the test server")
+    if status != 0 or net_words not in printed:
+        fail(f"a sandbox did not reach the test server at {url}, it exited with {status}")
+    ok(f"penumbra runs, no app is off, and a sandbox reaches the test server at {url}")
+
+    # a sandbox that goes on running. each time the test tells it to, it fetches and writes down what it got
+    steps = ("for step in 1 2 3; do while ! test -e go-$step; do sleep 0.2; done; "
+             f"curl -s -m 4 {url} > got-$step; echo $? > status-$step; done")
+    status, output = run(f"eclipse run --sandbox --folder {fetcher} --name fetcher sh -c '{steps}' "
+                         f"< /dev/null > {fetcher}/fetcher.log 2>&1 &; disown", "a sandbox that goes on running")
+    if status != 0:
+        fail(f"the sandbox that goes on running could not be started: {without_console(output).strip()!r}")
+
+    def fetched(step):
+        """Tells the running sandbox to fetch once more. Returns curl's exit status and what it got."""
+        run(f"touch {fetcher}/go-{step}", f"telling the sandbox to fetch for step {step}")
+        until = time.monotonic() + 40
+        while time.monotonic() < until:
+            _, output = run(f"cat {fetcher}/status-{step}", f"whether the sandbox fetched for step {step}")
+            done = re.search(r"^(\d+)\s*$", without_console(output), re.M)
+            if done:
+                _, got = run(f"cat {fetcher}/got-{step}", f"what the sandbox got in step {step}")
+                return int(done.group(1)), without_console(got)
+            time.sleep(1)
+        _, output = run(f"cat {fetcher}/fetcher.log", "what the running sandbox printed")
+        fail(f"the running sandbox did not fetch for step {step}: {without_console(output).strip()!r}")
+
+    code, got = fetched(1)
+    if code != 0 or net_words not in got:
+        fail(f"the running sandbox did not reach the test server before its network was off, curl exited with {code}")
+    _, output = run("systemctl --user list-units --plain --no-legend 'app-penumbra-fetcher-*'", "the running sandbox's scope")
+    units = re.findall(r"app-penumbra-fetcher-\d+\.scope", without_console(output))
+    print(f"\nboot-test: the user manager lists {units}", flush=True)
+    if len(units) != 1:
+        fail(f"the user manager lists {units} for fetcher, expected the one scope of the running sandbox")
+    status, printed = sandboxed("eclipse net off fetcher", "turning fetcher's network off while it runs")
+    if status != 0 or "The network is off for fetcher, also in the sandbox it runs in now." not in spaced(printed):
+        fail(f"eclipse net off fetcher exited with {status} without saying it cut the running sandbox")
+    status, printed = sandboxed("eclipse net", "the apps with fetcher off")
+    if status != 0 or not re.search(r"^fetcher\s+Off\s+1\s*$", printed, re.M):
+        fail(f"eclipse net does not list fetcher off with one sandbox running: {printed.strip()!r}")
+    _, output = run("sudo nft list table inet penumbra", "penumbra's table")
+    table = without_console(output)
+    print(f"\nboot-test: sudo nft list table inet penumbra printed:\n{table}", flush=True)
+    if units[0] not in table:
+        fail(f"penumbra's table does not hold {units[0]}")
+    cut, got = fetched(2)
+    if cut == 0 or net_words in got:
+        fail("the running sandbox reached the test server after its network was turned off")
+    status, printed = sandboxed("eclipse net on fetcher", "turning fetcher's network on while it runs")
+    if status != 0 or "The network is on for fetcher, also in the sandbox it runs in now." not in spaced(printed):
+        fail(f"eclipse net on fetcher exited with {status} without saying it gave the running sandbox the network back")
+    code, got = fetched(3)
+    if code != 0 or net_words not in got:
+        fail(f"the running sandbox did not reach the test server after its network was on again, curl exited with {code}")
+    ok(f"eclipse net off cut the network of {units[0]} while it ran (curl exited with {cut}), and eclipse net on gave it back")
+
+    # the next sandbox of an app that is off starts without the network. other apps keep theirs
+    status, printed = sandboxed("eclipse net off fetcher", "turning fetcher's network off")
+    if status != 0 or "The network is off for fetcher" not in spaced(printed):
+        fail(f"eclipse net off fetcher exited with {status}")
+    status, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} --name fetcher {fetch}",
+                                "a new sandbox of fetcher while its network is off")
+    if status == 0 or net_words in printed or "The network is off for fetcher." not in spaced(printed):
+        fail(f"a new sandbox of fetcher exited with {status} while its network was off, or did not say it was off")
+    status, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} {fetch}", "a sandbox of curl")
+    if status != 0 or net_words not in printed:
+        fail(f"a sandbox of curl did not reach the test server while fetcher's network was off, it exited with {status}")
+    if args.models:
+        # aura's local api on 127.0.0.1. a sandbox without the network has no loopback either
+        loopback = "curl -s -o /dev/null -m 4 -w 'code=%{http_code}' http://127.0.0.1:11434/v1/models"
+        codes = []
+        for app in ("fetcher", "curl"):
+            _, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} --name {app} {loopback}",
+                                   f"aura's local api from a sandbox of {app}")
+            found = re.search(r"code=(\d{3})", printed)
+            codes.append(found.group(1) if found else None)
+        if codes[0] != "000" or codes[1] in (None, "000"):
+            fail(f"aura's local api answered a sandbox of fetcher with {codes[0]} and one of curl with {codes[1]}, "
+                 "expected no answer and an answer")
+    ok("a new sandbox of fetcher started without the network while one of curl reached the test server"
+       + (", and only curl's reached aura's local api" if args.models else ""))
+
+    # aura is not an app of the switch. its unit keeps it off the network, which holds for anything in its cgroup
+    status, _ = run("systemctl is-active aura", "whether aura runs")
+    if status == 0:
+        status, printed = sandboxed(f"sudo sh -c 'echo $$ > /sys/fs/cgroup/system.slice/aura.service/cgroup.procs; "
+                                    f"exec {fetch}'", "the test server from aura's cgroup")
+        if status == 0 or net_words in printed:
+            fail("a process in aura's cgroup reached the test server")
+        ok(f"a process in aura's cgroup does not reach the test server, curl exited with {status}")
+
+    # what is off stays off when penumbra starts again
+    status, output = run("sudo systemctl restart penumbra; and systemctl is-active penumbra", "restarting penumbra")
+    if status != 0:
+        fail(f"penumbra did not start again: {without_console(output).strip()!r}")
+    _, output = run("sudo cat /var/lib/eclipse/penumbra/network-off", "the apps penumbra keeps off")
+    if not said(without_console(output), "fetcher"):
+        fail(f"penumbra's file does not hold fetcher: {without_console(output).strip()!r}")
+    status, printed = sandboxed("eclipse net", "the apps after penumbra started again")
+    if status != 0 or not re.search(r"^fetcher\s+Off\s+\d+\s*$", printed, re.M):
+        fail(f"eclipse net does not list fetcher off after penumbra started again: {printed.strip()!r}")
+    status, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} --name fetcher {fetch}",
+                                "a sandbox of fetcher after penumbra started again")
+    if status == 0 or net_words in printed:
+        fail(f"a sandbox of fetcher reached the test server after penumbra started again, it exited with {status}")
+    ok("fetcher's network stayed off when penumbra started again")
+
+    # what the switch refuses
+    for command, words, codes in (("eclipse net off 'no/such'", "cannot be the name of an app.", (2,)),
+                                  (f"eclipse run --sandbox --folder {fetcher} --name 'a b' true",
+                                   "cannot be the name of an app.", (2,)),
+                                  ("penumbra start -- true", "is not in one. Nothing was run.", (126,))):
+        status, printed = sandboxed(command, f"what {command} refuses")
+        if status not in codes or words not in spaced(printed):
+            fail(f"{command} exited with {status} without saying {words!r}")
+    status, printed = sandboxed("sudo -u nobody busctl call dev.eclipse.Penumbra /dev/eclipse/Penumbra "
+                                "dev.eclipse.Penumbra SetNetwork sb fetcher true", "the switch turned by nobody")
+    _, listed = sandboxed("eclipse net", "the apps after nobody tried the switch")
+    if status == 0 or not re.search(r"^fetcher\s+Off\s+\d+\s*$", listed, re.M):
+        fail(f"nobody turned fetcher's network on, busctl exited with {status}")
+    status, printed = sandboxed("eclipse net on fetcher", "turning fetcher's network on")
+    on_status, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} --name fetcher {fetch}",
+                                   "a sandbox of fetcher with its network on")
+    if status != 0 or on_status != 0 or net_words not in printed:
+        fail(f"fetcher did not reach the test server after eclipse net on, which exited with {status}")
+    server.shutdown()
+    ok("eclipse net refused a name that is not an app's, penumbra refused a start outside a sandbox's scope, "
+       "nobody could not turn the switch, and fetcher's network came back")
 
     # 7. the update. the second drive holds two newer versions' files. systemd-sysupdate checks them
     # against SHA256SUMS, writes the store and its verity partition into the free slot under the

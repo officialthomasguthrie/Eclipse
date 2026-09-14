@@ -3268,6 +3268,7 @@ dependencies = [
  "libeclipse",
  "rustix 1.1.4",
  "seccompiler",
+ "zbus",
 ]
 
 [[package]]

@@ -1,27 +1,92 @@
 # penumbra: sandboxing. bwrap for eclipse run --sandbox, which penumbra runs unprivileged in a user
-# namespace. flatpak with portals for gui apps has its own switch until it is tested, and the per-app
-# network switch comes later. no host disk is visible to any sandbox.
+# namespace, each sandbox in a scope of the user manager named for its app. penumbra serve answers on
+# the system bus as dev.eclipse.Penumbra and keeps the network switch for those apps in its own
+# nftables table. flatpak with portals for gui apps has its own switch until it is tested. no host
+# disk is visible to any sandbox.
 {
   config,
   lib,
   pkgs,
+  self,
   ...
 }:
 let
   cfg = config.eclipse.penumbra;
+  busName = "dev.eclipse.Penumbra";
+  # anyone may list the switch, and a sandbox asks as it starts, from its own scope. only the owner,
+  # who is in wheel, turns an app's network off or on. only root owns the name
+  policy = pkgs.writeTextFile {
+    name = "penumbra-dbus-policy";
+    destination = "/share/dbus-1/system.d/${busName}.conf";
+    text = ''
+      <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+       "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+      <busconfig>
+        <policy user="root">
+          <allow own="${busName}"/>
+          <allow send_destination="${busName}" send_interface="${busName}"/>
+        </policy>
+        <policy context="default">
+          <allow send_destination="${busName}" send_interface="${busName}" send_member="List"/>
+          <allow send_destination="${busName}" send_interface="${busName}" send_member="Starting"/>
+          <allow send_destination="${busName}" send_interface="org.freedesktop.DBus.Introspectable"/>
+          <allow send_destination="${busName}" send_interface="org.freedesktop.DBus.Peer"/>
+        </policy>
+        <policy group="wheel">
+          <allow send_destination="${busName}" send_interface="${busName}" send_member="SetNetwork"/>
+        </policy>
+      </busconfig>
+    '';
+  };
 in
 {
   options.eclipse.penumbra = {
     enable = lib.mkEnableOption "Penumbra, app sandboxing";
     flatpak.enable = lib.mkEnableOption "Flatpak with portals for graphical apps";
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = self.packages.${pkgs.stdenv.hostPlatform.system}.workspace;
+      description = "The build that provides the penumbra binary.";
+    };
   };
 
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       {
-        environment.systemPackages = [ pkgs.bubblewrap ];
+        environment.systemPackages = [
+          pkgs.bubblewrap
+          pkgs.nftables
+        ];
         # host disks are never auto-mounted. syzygy mounts them read-only on request
         services.udisks2.enable = lib.mkForce false;
+        services.dbus.packages = [ policy ];
+
+        systemd.services.penumbra = {
+          description = "Penumbra";
+          wantedBy = [ "multi-user.target" ];
+          requires = [ "dbus.service" ];
+          # nixos's own rules come first. they leave other tables alone
+          after = [
+            "dbus.service"
+            "nftables.service"
+          ];
+          path = [ pkgs.nftables ];
+          serviceConfig = {
+            Type = "dbus";
+            BusName = busName;
+            ExecStart = "${cfg.package}/bin/penumbra serve --state /var/lib/eclipse/penumbra";
+            Restart = "on-failure";
+            # the apps that are off. the table stays when the service stops, so they stay off
+            StateDirectory = "eclipse/penumbra";
+            # root with only the right to change the firewall. it reads the cgroup of the process
+            # that asks, which anyone may
+            CapabilityBoundingSet = [ "CAP_NET_ADMIN" ];
+            ProtectSystem = "strict";
+            ProtectHome = true;
+            PrivateTmp = true;
+            NoNewPrivileges = true;
+          };
+        };
       }
       (lib.mkIf cfg.flatpak.enable {
         services.flatpak.enable = true;

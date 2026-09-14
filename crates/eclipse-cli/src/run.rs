@@ -1,11 +1,12 @@
 //! `eclipse run --sandbox`: a command in a Penumbra sandbox. Penumbra checks what the sandbox may
-//! see and builds it, so this runs `penumbra run` in its place with the other arguments.
+//! see, starts it in a scope named for its app and builds it, so this runs `penumbra run` in its
+//! place with the other arguments.
 
 use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitCode};
 
-const USAGE: &str = "Usage: eclipse run --sandbox [--folder <folder>] [--read <path>]... \
-[--write <path>]... <command> [<argument>]...";
+const USAGE: &str = "Usage: eclipse run --sandbox [--name <app>] [--folder <folder>] \
+[--read <path>]... [--write <path>]... <command> [<argument>]...";
 
 pub fn run(args: &[String]) -> ExitCode {
     match penumbra_args(args) {
@@ -30,7 +31,7 @@ fn penumbra_args(args: &[String]) -> Result<Vec<String>, String> {
         match arg.as_str() {
             "--sandbox" => sandbox = true,
             "--help" | "-h" => return Ok(vec!["run".to_string(), "--help".to_string()]),
-            "--folder" | "--read" | "--write" => {
+            "--name" | "--folder" | "--read" | "--write" => {
                 forwarded.push(arg.clone());
                 forwarded.extend(rest.next().cloned());
             }
@@ -73,6 +74,10 @@ mod tests {
             Ok(args(&["run", "--read", "/tmp/x", "cat", "--sandbox"]))
         );
         assert_eq!(
+            penumbra_args(&args(&["--sandbox", "--name", "--sandbox", "curl"])),
+            Ok(args(&["run", "--name", "--sandbox", "curl"]))
+        );
+        assert_eq!(
             penumbra_args(&args(&["--help"])),
             Ok(args(&["run", "--help"]))
         );
@@ -83,5 +88,6 @@ mod tests {
         assert!(penumbra_args(&args(&["make"])).is_err());
         assert!(penumbra_args(&args(&[])).is_err());
         assert!(penumbra_args(&args(&["--read", "--sandbox", "ls"])).is_err());
+        assert!(penumbra_args(&args(&["--name", "--sandbox", "ls"])).is_err());
     }
 }
