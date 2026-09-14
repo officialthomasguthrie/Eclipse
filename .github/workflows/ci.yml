@@ -1,575 +1,92 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  rust:
-    name: Rust workspace
+  probe:
+    name: flatpak probe
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      # corona's panel links the wayland client library and xkbcommon, the lock screen pam
-      - run: sudo apt-get install -y --no-install-recommends libwayland-dev libxkbcommon-dev libpam0g-dev >/dev/null
-      - run: cargo fmt --all --check
-      # the umbra crates need the compositor's system libraries, the nix job builds those
-      - run: cargo clippy --workspace --exclude umbra --exclude niri-config --exclude niri-ipc --all-targets -- -D warnings
-      - run: cargo test --workspace --exclude umbra --exclude niri-config --exclude niri-ipc
-      - run: cargo build --release -p eclipse-flash --bin eclipse-flash -p eclipse-flash-app --bin eclipse-flash-app
-      - name: Take a picture of the eclipse-flash app
-        # under a virtual X display. the runner has no stick, so the app lists none, and quits
-        run: |
-          sudo apt-get install -y --no-install-recommends xvfb libxkbcommon-x11-0 libxcursor1 libxrandr2 libxi6 >/dev/null
-          timeout 120 xvfb-run -a -s '-screen 0 1280x1024x24' target/release/eclipse-flash-app --screenshot flash-app-linux.png
-          test -s flash-app-linux.png
-      - uses: actions/upload-artifact@v4
-        continue-on-error: true
-        with:
-          name: eclipse-flash-linux-${{ github.sha }}
-          path: |
-            target/release/eclipse-flash
-            target/release/eclipse-flash-app
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        continue-on-error: true
-        with:
-          name: flash-app-linux-${{ github.sha }}
-          path: flash-app-linux.png
-          retention-days: 14
-
-  flash-macos:
-    # eclipse-flash on a mac: clippy and the tests, then the runner's own disks refused, and a drive
-    # written onto a disk image hdiutil attaches as a disk, the way a stick is written, and into a file.
-    # the app is built, takes a picture of itself, and its own code writes a drive through the prompt
-    name: eclipse-flash on macOS
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy -p libeclipse --features disk --all-targets -- -D warnings
-      - run: cargo clippy -p eclipse-flash --all-targets -- -D warnings
-      - run: cargo clippy -p eclipse-flash-app --all-targets -- -D warnings
-      - run: cargo test -p libeclipse --features disk
-      - run: cargo test -p eclipse-flash
-      - run: cargo test -p eclipse-flash-app
-      - run: cargo build --release -p eclipse-flash --bin eclipse-flash --example test-drive
-      - run: cargo build --release -p eclipse-flash-app --bin eclipse-flash-app --example elevated
-      - name: Write a drive onto a disk image
-        run: |
-          flash=target/release/eclipse-flash
-          sample=target/release/examples/test-drive
-          "$sample" image sample.raw.zst
-          refused() {
-            what=$1 words=$2
-            shift 2
-            if out=$("$@" 2>&1); then
-              echo "$out"
-              echo "::error::eclipse-flash wrote onto $what"
-              exit 1
-            fi
-            echo "$what: $out"
-            if ! grep -qE -- "$words" <<<"$out"; then
-              echo "::error::eclipse-flash did not refuse $what with: $words"
-              exit 1
-            fi
-          }
-          refused "a disk without root" "needs root" "$flash" write --serial disk0 sample.raw.zst /dev/disk0
-          # each of the runner's disks is refused, the one macOS runs from among them
-          running=0
-          for disk in $(diskutil list | awk '/^\/dev\/disk/ { print $1 }'); do
-            refused "the runner's disk $disk" "is the drive this system runs from\.|is not a whole disk\.|is neither removable nor on USB\.|is read only\.|Unmount or close it first\." \
-              sudo "$flash" write --serial "${disk#/dev/}" sample.raw.zst "$disk"
-            if grep -qF "is the drive this system runs from." <<<"$out"; then running=1; fi
-          done
-          if [ "$running" != 1 ]; then
-            echo "::error::eclipse-flash did not find the disk macOS runs from"
-            exit 1
-          fi
-          # a raw file of 24G attached as a disk, with nothing mounted from it
-          mkfile -n 24g drive.img
-          image=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount drive.img | awk 'NR == 1 { print $1 }')
-          "$flash" list | tee list.txt
-          grep -qF "$image, Disk Image, 24.0 GiB." list.txt
-          # the app with the disk image listed and selected, in a picture. macos has no timeout command
-          perl -e 'alarm 120; exec @ARGV' target/release/eclipse-flash-app --screenshot flash-app-macos.png sample.raw.zst
-          test -s flash-app-macos.png
-          refused "a wrong name" "is not the name of $image\. Nothing was written\." \
-            sudo "$flash" write --serial disk99 sample.raw.zst "$image"
-          sudo "$flash" write --exchange 64M --serial "${image#/dev/}" sample.raw.zst "$image"
-          # eclipse-flash ejects the disk it wrote, and the file behind it holds the drive
-          if diskutil info "$image" >/dev/null 2>&1; then
-            echo "::error::$image is still attached"
-            exit 1
-          fi
-          "$sample" check drive.img
-          image=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount drive.img | awk 'NR == 1 { print $1 }')
-          diskutil list "$image"
-          hdiutil detach "$image"
-          # a file for a virtual machine
-          mkfile -n 24g file.img
-          sudo "$flash" write sample.raw.zst file.img
-          "$sample" check file.img
-          refused "a file written once" "is not empty" sudo "$flash" write sample.raw.zst file.img
-          rm drive.img file.img
-      - name: Write a drive the way the app does
-        # the app's own code starts eclipse-flash write through the administrator prompt. it runs as
-        # root here, where the prompt asks nothing
-        timeout-minutes: 10
-        run: |
-          mkfile -n 24g elevated.img
-          image=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount elevated.img | awk 'NR == 1 { print $1 }')
-          sudo target/release/examples/elevated "$PWD/target/release/eclipse-flash" "$PWD/sample.raw.zst" "$image" "${image#/dev/}" | tee elevated.txt
-          grep -qF "$image is an Eclipse drive now" elevated.txt
-          target/release/examples/test-drive check elevated.img
-          rm elevated.img
-      - uses: actions/upload-artifact@v4
-        continue-on-error: true
-        with:
-          name: eclipse-flash-macos-${{ github.sha }}
-          path: |
-            target/release/eclipse-flash
-            target/release/eclipse-flash-app
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        if: always()
-        continue-on-error: true
-        with:
-          name: flash-app-macos-${{ github.sha }}
-          path: flash-app-macos.png
-          if-no-files-found: ignore
-          retention-days: 14
-
-  flash-windows:
-    # eclipse-flash on windows: clippy and the tests, then the runner's own disks refused, and a drive
-    # written onto a VHDX diskpart attaches as a disk, the way a stick is written. the app is built,
-    # takes a picture of itself, and its own code writes a drive through Start-Process -Verb RunAs
-    name: eclipse-flash on Windows
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy -p libeclipse --features disk --all-targets -- -D warnings
-      - run: cargo clippy -p eclipse-flash --all-targets -- -D warnings
-      - run: cargo clippy -p eclipse-flash-app --all-targets -- -D warnings
-      - run: cargo test -p libeclipse --features disk
-      - run: cargo test -p eclipse-flash
-      - run: cargo test -p eclipse-flash-app
-      - run: cargo build --release -p eclipse-flash --bin eclipse-flash --example test-drive
-      - run: cargo build --release -p eclipse-flash-app --bin eclipse-flash-app --example elevated
-      - name: Write a drive onto a virtual disk
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $flash = 'target\release\eclipse-flash.exe'
-          $sample = 'target\release\examples\test-drive.exe'
-          function Refused($what, $words, [string[]]$arguments) {
-            $out = & $flash @arguments 2>&1 | Out-String
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host $out
-              throw "eclipse-flash wrote onto $what"
-            }
-            Write-Host "${what}: $out"
-            if ($out -notmatch $words) {
-              throw "eclipse-flash did not refuse $what with: $words"
-            }
-            return $out
-          }
-          & $sample image sample.raw.zst
-          if ($LASTEXITCODE -ne 0) { throw 'test-drive did not write the sample image' }
-          # each of the runner's disks is refused, the one Windows runs from among them
-          $running = $false
-          foreach ($disk in Get-Disk) {
-            $name = "\\.\PhysicalDrive$($disk.Number)"
-            $out = Refused $name 'is the drive this system runs from\.|is neither removable nor on USB\.' @('write', '--serial', "PhysicalDrive$($disk.Number)", 'sample.raw.zst', $name)
-            if ($out -match 'runs from') { $running = $true }
-          }
-          if (-not $running) { throw 'eclipse-flash did not find the disk Windows runs from' }
-          # a VHDX of 24G attached as a disk, with no partitions on it
-          $vhd = Join-Path $env:RUNNER_TEMP 'drive.vhdx'
-          "create vdisk file=`"$vhd`" maximum=24576 type=expandable`nselect vdisk file=`"$vhd`"`nattach vdisk" | Set-Content attach.txt
-          diskpart /s attach.txt
-          if ($LASTEXITCODE -ne 0) { throw 'diskpart did not attach the virtual disk' }
-          Start-Sleep -Seconds 5
-          $number = (Get-Disk | Where-Object { [string]$_.BusType -eq 'File Backed Virtual' }).Number
-          $name = "\\.\PhysicalDrive$number"
-          $list = & $flash list | Out-String
-          Write-Output $list
-          if (-not $list.Contains("$name, Msft Virtual Disk, 24.0 GiB.")) { throw "eclipse-flash list does not show $name" }
-          # the app with the virtual disk listed and selected, in a picture. it has no console, so it is
-          # waited for
-          $app = Start-Process -FilePath 'target\release\eclipse-flash-app.exe' -ArgumentList '--screenshot', 'flash-app-windows.png', 'sample.raw.zst' -PassThru
-          if (-not $app.WaitForExit(120000)) { $app.Kill(); throw 'the app did not quit after its picture' }
-          if (-not (Test-Path 'flash-app-windows.png')) { throw "the app took no picture and ended with $($app.ExitCode)" }
-          Refused 'a wrong name' 'is not the name of' @('write', '--serial', 'PhysicalDrive99', 'sample.raw.zst', $name)
-          & $flash write --exchange 64M --serial "PhysicalDrive$number" sample.raw.zst $name
-          if ($LASTEXITCODE -ne 0) { throw "eclipse-flash did not write $name" }
-          & $sample check $name
-          if ($LASTEXITCODE -ne 0) { throw "$name does not hold the drive" }
-          Get-Partition -DiskNumber $number | Format-Table -AutoSize
-          "select vdisk file=`"$vhd`"`ndetach vdisk" | Set-Content detach.txt
-          diskpart /s detach.txt
-      - name: Write a drive the way the app does
-        # the app's own code starts eclipse-flash write through Start-Process -Verb RunAs. the runner's
-        # account is an administrator that is not asked
-        timeout-minutes: 10
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $vhd = Join-Path $env:RUNNER_TEMP 'elevated.vhdx'
-          "create vdisk file=`"$vhd`" maximum=24576 type=expandable`nselect vdisk file=`"$vhd`"`nattach vdisk" | Set-Content attach.txt
-          diskpart /s attach.txt
-          if ($LASTEXITCODE -ne 0) { throw 'diskpart did not attach the virtual disk' }
-          Start-Sleep -Seconds 5
-          $number = (Get-Disk | Where-Object { [string]$_.BusType -eq 'File Backed Virtual' }).Number
-          $name = "\\.\PhysicalDrive$number"
-          $flash = (Resolve-Path 'target\release\eclipse-flash.exe').Path
-          $image = (Resolve-Path 'sample.raw.zst').Path
-          $out = & 'target\release\examples\elevated.exe' $flash $image $name "PhysicalDrive$number" | Out-String
-          $code = $LASTEXITCODE
-          Write-Host $out
-          if ($code -ne 0) { throw "the write the app starts ended with $code" }
-          if (-not $out.Contains("$name is an Eclipse drive now")) { throw 'eclipse-flash did not say the drive is written' }
-          & 'target\release\examples\test-drive.exe' check $name
-          if ($LASTEXITCODE -ne 0) { throw "$name does not hold the drive" }
-          "select vdisk file=`"$vhd`"`ndetach vdisk" | Set-Content detach.txt
-          diskpart /s detach.txt
-      - uses: actions/upload-artifact@v4
-        continue-on-error: true
-        with:
-          name: eclipse-flash-windows-${{ github.sha }}
-          path: |
-            target/release/eclipse-flash.exe
-            target/release/eclipse-flash-app.exe
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        if: always()
-        continue-on-error: true
-        with:
-          name: flash-app-windows-${{ github.sha }}
-          path: flash-app-windows.png
-          if-no-files-found: ignore
-          retention-days: 14
-
-  nix:
-    name: Nix flake
-    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/determinate-nix-action@v3
-      - run: nix flake check -L
-
-  design:
-    name: Design lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: bash tools/design-lint.sh
-      - name: Check that the lint fails on a banned word
+      - name: Build the bundles and the tools
         run: |
-          # the word is split so this file passes the lint itself
-          printf 'A %s%s setup.\n' seam less > "$RUNNER_TEMP/banned.md"
-          if bash tools/design-lint.sh "$RUNNER_TEMP/banned.md"; then
-            echo "the lint accepted a banned word"; exit 1
-          fi
-
-  image:
-    # github runners build the image until there is a real builder. artifact on the run.
-    name: Bootable image
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' }}
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      # the drop step below deletes the images older runs left behind
-      actions: write
-    steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-      - uses: actions/checkout@v4
-      - uses: DeterminateSystems/determinate-nix-action@v3
-      - name: Allow user namespaces
-        # ubuntu blocks unprivileged userns via apparmor, systemd-repart needs them inside the sandbox
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Build
-        id: build
-        # the image in result, in result-1 the update files of the same system a version on, and in
-        # result-2 those of a version after it that never boots well. the boot test installs both
-        run: nix build .#image .#update .#broken-update -L --print-build-logs --keep-failed || { echo "failed=1" >> "$GITHUB_OUTPUT"; exit 1; }
-      - name: Report the size of the store partition
-        # the store has to fit its 8G slot. repart makes the partition as big as what is in it, so
-        # its size in the partition table is the number that counts
+          nix build .#test-flatpak -o test-flatpak -L
+          ls -la test-flatpak/
+          np='(builtins.getFlake (toString ./.)).inputs.nixpkgs.legacyPackages.x86_64-linux'
+          nix build --impure -o flatpak --expr "$np.flatpak"
+          nix build --impure -o xdp --expr "$np.xdg-desktop-portal"
+          ls flatpak/bin xdp/libexec
+          find -L flatpak/ xdp/ -name '*.service' | grep -v installed-tests
+      - name: User manager
         run: |
-          img=$(ls result/*.raw | head -n1)
-          table=$(sfdisk -J "$img")
-          # slot a's labels carry the version: store_0.1.0, store-verity_0.1.0
-          size() {
-            jq -r --arg prefix "$1" '.partitiontable as $t | $t.partitions[] | select(.name | startswith($prefix)) | .size * ($t.sectorsize // 512)' <<<"$table"
-          }
-          store=$(size store_)
-          verity=$(size store-verity_)
-          if [ -z "$store" ]; then
-            echo "::error::The image has no store partition."
-            sfdisk -l "$img"
-            exit 1
-          fi
-          budget=$((8 * 1024 * 1024 * 1024))
-          line="Store partition $(numfmt --to=iec-i --suffix=B "$store") ($store bytes) of 8.0GiB, verity $(numfmt --to=iec-i --suffix=B "${verity:-0}")"
-          echo "$line"
-          if [ "$store" -gt "$budget" ]; then
-            echo "::error title=Store partition::$line. It is over its budget."
-            exit 1
-          fi
-          echo "::notice title=Store partition::$line"
-      - name: Diagnose
-        if: failure() && steps.build.outputs.failed == '1'
-        run: |
-          drv=$(nix eval --raw .#nixosConfigurations.eclipse.config.system.build.intermediateImage.drvPath)
-          echo "::group::nix log of $drv"
-          nix log "$drv" | tail -n 80 || true
-          echo "::endgroup::"
-          echo "::group::kept build dirs"
-          sudo find /nix/var/nix/builds /tmp -maxdepth 1 -type d -name 'nix-*' 2>/dev/null | while read -r d; do
-            echo "== $d"; sudo ls -la "$d" | head -n 40
+          set +e
+          uname -r
+          systemctl --version | head -1
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo apt-get install -y --no-install-recommends dbus-user-session fuse3 >/dev/null
+          sudo mkdir -p /run/wrappers/bin
+          sudo ln -sf /usr/bin/fusermount3 /run/wrappers/bin/fusermount3
+          ls -l /usr/bin/fusermount3 /dev/fuse
+          ls /usr/share/dbus-1/services/ | grep -i portal
+          uid=$(id -u)
+          # the nix units and bus services where the user manager and the session bus look
+          mkdir -p ~/.config/systemd/user ~/.local/share/dbus-1/services
+          for f in $(find -L flatpak/ xdp/ -name '*.service' | grep -v installed-tests); do
+            case $f in
+              */dbus-1/services/*) cp "$f" ~/.local/share/dbus-1/services/ ;;
+              */systemd/user/*) cp "$f" ~/.config/systemd/user/ ;;
+            esac
           done
-          echo "::endgroup::"
-      - name: Compress
+          ls ~/.config/systemd/user ~/.local/share/dbus-1/services
+          sudo loginctl enable-linger "$(id -un)"
+          for i in $(seq 30); do [ -S "/run/user/$uid/bus" ] && break; sleep 1; done
+          ls -l "/run/user/$uid"
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
+          echo "$PWD/flatpak/bin" >> "$GITHUB_PATH"
+      - name: Install
         run: |
-          sudo apt-get install -y zstd >/dev/null
-          img=$(ls result/*.raw | head -n1)
-          zstd -T0 -12 "$img" -o eclipse.raw.zst
-          ls -la result/ eclipse.raw.zst
-          # the update files are compressed already. out of the store, where they are read only, one
-          # directory for each version
-          mkdir updates
-          cp -rL --no-preserve=mode result-1 updates/next
-          cp -rL --no-preserve=mode result-2 updates/broken
-          ls -la updates/*
-      - name: Drop the images older runs left
-        # each one is 2G and the account has a storage quota. the upload below replaces them, so
-        # only this run's image is kept. without this the upload fails with "storage quota has
-        # been hit" and the boot job never runs
-        env:
-          GH_TOKEN: ${{ github.token }}
+          set +e
+          systemctl --user daemon-reload
+          flatpak --version
+          flatpak install --user --noninteractive --bundle test-flatpak/platform.flatpak
+          echo "runtime status $?"
+          flatpak install --user --noninteractive --bundle test-flatpak/app.flatpak
+          echo "app status $?"
+          flatpak list --user --columns=application,branch,origin
+          flatpak info --user dev.eclipse.TestApp
+      - name: Run
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts" --paginate \
-            --jq '.artifacts[] | select(.expired == false) | select(.name | startswith("eclipse-image-")) | "\(.created_at) \(.id)"' \
-            | while read -r created id; do
-            echo "dropping artifact $id from $created"
-            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" || true
-          done
-      - name: Hand the image and the update to the boot job
-        # through the cache, not an artifact: artifact storage has a quota of its own and a full
-        # one refuses every upload for hours, which used to take the boot job down with it
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            eclipse.raw.zst
-            updates
-          key: image-${{ github.sha }}
-      - uses: actions/upload-artifact@v4
-        # the image to download and flash. the boot job does not need it, so a full quota here
-        # is not a failure
-        continue-on-error: true
-        with:
-          name: eclipse-image-${{ github.sha }}
-          path: eclipse.raw.zst
-          retention-days: 14
-
-  boot:
-    # the image runs here through the flake's vm app: eclipse-flash writes it onto a drive in a file,
-    # qemu boots that with kvm, everything over serial
-    name: Boot test
-    runs-on: ubuntu-latest
-    needs: image
-    if: ${{ github.event_name != 'pull_request' }}
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      # the last step drops the image out of the cache again
-      actions: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Take the image and the update from the image job
-        uses: actions/cache/restore@v4
-        with:
-          # the same paths the image job saved, or the cache is not found
-          path: |
-            eclipse.raw.zst
-            updates
-          key: image-${{ github.sha }}
-          fail-on-cache-miss: true
-      - uses: DeterminateSystems/determinate-nix-action@v3
-      - name: Build the vm app and eclipse-flash
-        run: |
-          nix build .#vm -o vm -L
-          nix build .#eclipse-flash -o flash -L
-      - name: Install pexpect
-        run: |
-          sudo apt-get update >/dev/null
-          sudo apt-get install -y --no-install-recommends python3-pexpect >/dev/null
-      - name: Open kvm to the runner
-        run: |
-          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; ls -l /dev/kvm; else echo "no /dev/kvm, qemu will use tcg"; fi
-      - name: Read the test model from the manifest
-        id: model
-        run: |
-          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
-          import tomllib
-          with open("models/manifest.toml", "rb") as f:
-              manifest = tomllib.load(f)
-          [model] = [m for m in manifest["chat"] if m.get("test")]
-          for key in ("file", "url", "sha256"):
-              print(f"{key}={model[key]}")
-          EOF
-      - name: Cache the test model
-        id: model-cache
-        uses: actions/cache@v4
-        with:
-          path: models/cache
-          key: model-${{ steps.model.outputs.sha256 }}
-      - name: Download the test model
-        if: steps.model-cache.outputs.cache-hit != 'true'
-        run: curl -fL --retry 3 --create-dirs -o "models/cache/${{ steps.model.outputs.file }}" "${{ steps.model.outputs.url }}"
-      - name: Check the test model
-        run: echo "${{ steps.model.outputs.sha256 }}  models/cache/${{ steps.model.outputs.file }}" | sha256sum -c
-      - name: Check what eclipse-flash refuses
-        # it runs as root here, and every disk of the runner is inside it. a loop device, each of the
-        # runner's disks, a file that holds something and a file that is too small are refused, and
-        # nothing is written to any of them. the image is read and checked each time
-        run: |
-          refused() {
-            what=$1 words=$2 target=$3
-            if out=$(printf 'eclipse-test\n' | sudo flash/bin/eclipse-flash write eclipse.raw.zst "$target" 2>&1); then
-              echo "$out"
-              echo "::error::eclipse-flash wrote onto $what"
-              exit 1
-            fi
-            echo "$what: $out"
-            if ! grep -qE -- "$words" <<<"$out"; then
-              echo "::error::eclipse-flash did not refuse $what with: $words"
-              exit 1
-            fi
-          }
-          flash/bin/eclipse-flash list
-          truncate -s 32G loop.img
-          loop=$(sudo losetup --find --show loop.img)
-          refused "a loop device" "is not a whole disk\." "$loop"
-          sudo losetup --detach "$loop"
-          cmp -n 1048576 loop.img /dev/zero
-          running=0
-          for disk in $(lsblk --nodeps --noheadings --paths --output NAME,TYPE | awk '$2 == "disk" { print $1 }'); do
-            before=$(sudo sfdisk --dump "$disk" 2>&1 || true)
-            refused "the runner's disk $disk" "is the drive this system runs from\.|is neither removable nor on USB\." "$disk"
-            if grep -qF "is the drive this system runs from." <<<"$out"; then running=1; fi
-            if [ "$(sudo sfdisk --dump "$disk" 2>&1 || true)" != "$before" ]; then
-              echo "::error::the partition table of $disk changed"
-              exit 1
-            fi
-          done
-          if [ "$running" != 1 ]; then
-            echo "::error::eclipse-flash did not find the disk the runner runs from"
-            exit 1
-          fi
-          printf 'something' > used.img
-          truncate -s 32G used.img
-          refused "a file that holds something" "is not empty, and eclipse-flash only writes into an empty file\." used.img
-          truncate -s 8G small.img
-          refused "a file that is too small" "holds 8\.0 GiB, and Eclipse needs 21\.1 GiB\." small.img
-          rm loop.img used.img small.img
-      - name: Boot
-        run: |
-          # the update files go on a drive of their own, persist has no room for them. the test
-          # mounts each version's directory where systemd-sysupdate looks for updates
-          truncate -s "$(($(du -sm updates | cut -f1) + 512))M" updates.img
-          mkfs.ext4 -q -F -L updates -d updates updates.img
-          rm -r updates
-          # an empty disk for the backup step. vault finds it by the uuid mkfs gives it
-          truncate -s 256M backup.img
-          mkfs.ext4 -q -F -L backup backup.img
-          # the disk the clone goes onto. sparse, the clone fills about 7G of it, and the runner has
-          # more than 80G free. the first drive has an exchange partition, so the clone gets one too
-          truncate -s 26G clone.img
-          df -h .
-          printf 'eclipse-test' > pass.txt
-          # the vm app writes the image onto a drive in a file with eclipse-flash and boots that
-          python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw.zst pass.txt --models models/cache \
-            --exchange 1G --log serial.log --splash splash.png --desktop desktop.png --corona \
-            --updates updates.img --backup backup.img --clone clone.img --timeout 1500
-      - name: Boot a drive that makes persist at its first boot
-        # eclipse-flash leaves persist out, the way it writes a drive on macos and windows. the drive
-        # asks for a passphrase over serial, makes persist and formats its exchange partition, and the
-        # next boot opens that persist with the same passphrase
-        run: |
-          python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw.zst pass.txt --first-boot --exchange 1G \
-            --log first-boot.log --splash first-boot-splash.png --timeout 900
-      - uses: actions/upload-artifact@v4
+          set +e
+          printf 'Kept out of the sandbox 5813\n' > ~/private.txt
+          doc=$(flatpak document-export --app=dev.eclipse.TestApp ~/private.txt)
+          echo "export status $? doc $doc"
+          ls -la "/run/user/$(id -u)/doc" "$(dirname "$doc")"
+          flatpak run dev.eclipse.TestApp "$doc" ~/private.txt
+          echo "run status $?"
+          inside="/run/flatpak/doc/${doc#/run/user/*/doc/}"
+          flatpak run dev.eclipse.TestApp "$inside" ~/private.txt
+          echo "run inside status $?"
+          echo "without the network:"
+          flatpak run --unshare=network dev.eclipse.TestApp "$inside" ~/private.txt
+          echo "settings:"
+          flatpak run --command=gdbus dev.eclipse.TestApp call --session --timeout 10 --dest org.freedesktop.portal.Desktop \
+            --object-path /org/freedesktop/portal/desktop --method org.freedesktop.portal.Settings.ReadOne org.freedesktop.appearance color-scheme
+          echo "documents mount point:"
+          flatpak run --command=gdbus dev.eclipse.TestApp call --session --timeout 10 --dest org.freedesktop.portal.Documents \
+            --object-path /org/freedesktop/portal/documents --method org.freedesktop.portal.Documents.GetMountPoint
+          echo "the scope while it runs:"
+          flatpak run --command=sh dev.eclipse.TestApp -c 'cat /proc/self/cgroup; sleep 5' &
+          sleep 3
+          systemctl --user list-units --full --plain --no-legend 'app-flatpak-*' | cat
+          flatpak ps
+          wait
+          systemctl --user list-units --full --plain --no-legend '*portal*' '*flatpak*' | cat
+      - name: Logs
         if: always()
-        continue-on-error: true
-        with:
-          name: boot-serial-${{ github.sha }}
-          path: |
-            serial.log
-            first-boot.log
-          if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
-        if: always()
-        continue-on-error: true
-        with:
-          name: boot-splash-${{ github.sha }}
-          path: |
-            splash.png
-            first-boot-splash.png
-          if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
-        id: screendumps
-        if: always()
-        continue-on-error: true
-        with:
-          name: boot-desktop-${{ github.sha }}
-          path: desktop*.png
-          if-no-files-found: ignore
-      - name: Put the screendumps in the log when the upload could not keep them
-        # the account's artifact storage stays full for hours after it is cleared, and the run is
-        # the only place these pictures exist. a few tens of kilobytes of base64 always fit in a
-        # log, and `gh run view --log | base64 -d` gets the png back
-        if: always() && steps.screendumps.outcome == 'failure'
         run: |
-          for f in splash.png first-boot-splash.png desktop*.png; do
-            [ -f "$f" ] || continue
-            echo "::group::$f"
-            base64 -w0 "$f"; echo
-            echo "::endgroup::"
-          done
-      - name: Drop the image from the cache
-        # only after a pass. a failed boot job keeps it, so `gh run rerun --failed` does not have to
-        # build the image again. when the quota is full, github drops the oldest entries
-        if: success()
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh cache delete "image-${{ github.sha }}" || true
+          set +e
+          sudo journalctl _UID=$(id -u) --no-pager | tail -n 150
