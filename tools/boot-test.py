@@ -124,13 +124,16 @@ AGAIN = r"Type the passphrase again"
 COMMAND_START = r"\x1b\]133;C[^\x07\x1b]*(?:\x07|\x1b\\)"
 COMMAND_END = r"\x1b\]133;D;(\d+)(?:\x07|\x1b\\)"
 ESCAPES = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?>=]*[A-Za-z]|\x1b[=>]")
+# a line of the journal on the serial console, with the two line ends it comes with. it can land in
+# the middle of a line a command prints, between two of its writes
+JOURNAL = re.compile(r"(?:^[ \t]*)?\[\s*\d+\.\d+\] [^\n]*\n{0,2}", re.M)
 
 
 def without_console(output):
     """What a command printed, without the journal's lines that reach the serial console while it
-    runs and without blank lines at either end."""
-    lines = [line for line in output.splitlines() if not re.match(r"\s*\[\s*\d+\.\d+\] ", line)]
-    return "\n".join(lines).strip("\n")
+    runs and without blank lines at either end. Where a journal line cut a line of the command's in
+    two, the two halves are one line again."""
+    return JOURNAL.sub("", output).strip("\n")
 
 
 def first(paths):
@@ -2005,7 +2008,9 @@ def main():
                  f"start: {without_console(output).strip()!r}")
 
         def flatpak_app(options, what):
-            status, printed = sandboxed(f"flatpak run {options}{app_id} {document} {secret}", what)
+            # into a file first. the portals log to the console as they start, right while the app prints
+            status, _ = run(f"flatpak run {options}{app_id} {document} {secret} > ~/flatpak-app.txt 2>&1", what)
+            _, printed = sandboxed("cat ~/flatpak-app.txt", f"what {what} printed")
             if not said(printed, "finished"):
                 fail(f"the flatpak app exited with {status} before it finished")
             return printed
