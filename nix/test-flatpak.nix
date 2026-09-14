@@ -28,7 +28,8 @@ in
 pkgs.runCommand "eclipse-test-flatpak" { nativeBuildInputs = [ pkgs.flatpak ]; } ''
   export HOME=$TMPDIR
 
-  mkdir -p platform/usr/bin
+  # a runtime's files are its usr, and build-export wants the files folder a build-init makes as well
+  mkdir -p platform/usr/bin platform/files
   cp ${pkgs.pkgsStatic.busybox}/bin/busybox platform/usr/bin/busybox
   for tool in $(platform/usr/bin/busybox --list); do
     [ -e platform/usr/bin/$tool ] || ln -s busybox platform/usr/bin/$tool
