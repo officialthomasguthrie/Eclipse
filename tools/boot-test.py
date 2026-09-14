@@ -1819,7 +1819,7 @@ def main():
             break
         time.sleep(3)
     else:
-        _, output = run("ip -brief address; nmcli device", "the network of the vm")
+        _, output = run("ip -brief address; nmcli device | cat", "the network of the vm")
         fail(f"the vm does not reach the test server at {url}, curl exited with {status}: "
              f"{without_console(output).strip()!r}")
     status, output = run("systemctl is-active penumbra", "whether penumbra runs")
@@ -1860,7 +1860,8 @@ def main():
     code, got = fetched(1)
     if code != 0 or net_words not in got:
         fail(f"the running sandbox did not reach the test server before its network was off, curl exited with {code}")
-    _, output = run("systemctl --user list-units --plain --no-legend 'app-penumbra-fetcher-*'", "the running sandbox's scope")
+    _, output = run("systemctl --user --no-pager list-units --plain --no-legend 'app-penumbra-fetcher-*'",
+                    "the running sandbox's scope")
     units = re.findall(r"app-penumbra-fetcher-\d+\.scope", without_console(output))
     print(f"\nboot-test: the user manager lists {units}", flush=True)
     if len(units) != 1:
