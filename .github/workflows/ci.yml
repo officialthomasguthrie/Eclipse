@@ -18,32 +18,24 @@ jobs:
           np='(builtins.getFlake (toString ./.)).inputs.nixpkgs.legacyPackages.x86_64-linux'
           nix build --impure -o flatpak --expr "$np.flatpak"
           nix build --impure -o xdp --expr "$np.xdg-desktop-portal"
-          ls flatpak/bin xdp/libexec
-          find -L flatpak/ xdp/ -name '*.service' | grep -v installed-tests
       - name: User manager
         run: |
           set +e
-          uname -r
-          systemctl --version | head -1
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo apt-get install -y --no-install-recommends dbus-user-session fuse3 >/dev/null
           sudo mkdir -p /run/wrappers/bin
           sudo ln -sf /usr/bin/fusermount3 /run/wrappers/bin/fusermount3
-          ls -l /usr/bin/fusermount3 /dev/fuse
-          ls /usr/share/dbus-1/services/ | grep -i portal
           uid=$(id -u)
-          # the nix units and bus services where the user manager and the session bus look
           mkdir -p ~/.config/systemd/user ~/.local/share/dbus-1/services
-          for f in $(find -L flatpak/ xdp/ -name '*.service' | grep -v installed-tests); do
+          for f in $(find -L flatpak/ xdp/ -name '*.service' | grep -v installed-tests | sort -u); do
             case $f in
-              */dbus-1/services/*) cp "$f" ~/.local/share/dbus-1/services/ ;;
-              */systemd/user/*) cp "$f" ~/.config/systemd/user/ ;;
+              */dbus-1/services/*) install -m 644 "$f" ~/.local/share/dbus-1/services/ ;;
+              */systemd/user/*) install -m 644 "$f" ~/.config/systemd/user/ ;;
             esac
           done
-          ls ~/.config/systemd/user ~/.local/share/dbus-1/services
+          cat ~/.config/systemd/user/xdg-desktop-portal.service
           sudo loginctl enable-linger "$(id -un)"
           for i in $(seq 30); do [ -S "/run/user/$uid/bus" ] && break; sleep 1; done
-          ls -l "/run/user/$uid"
           echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
           echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
           echo "$PWD/flatpak/bin" >> "$GITHUB_PATH"
@@ -51,42 +43,51 @@ jobs:
         run: |
           set +e
           systemctl --user daemon-reload
-          flatpak --version
           flatpak install --user --noninteractive --bundle test-flatpak/platform.flatpak
-          echo "runtime status $?"
           flatpak install --user --noninteractive --bundle test-flatpak/app.flatpak
-          echo "app status $?"
-          flatpak list --user --columns=application,branch,origin
-          flatpak info --user dev.eclipse.TestApp
-      - name: Run
+          flatpak list --user --columns=application,branch | cat
+      - name: Without a graphical session
         run: |
           set +e
           printf 'Kept out of the sandbox 5813\n' > ~/private.txt
           doc=$(flatpak document-export --app=dev.eclipse.TestApp ~/private.txt)
-          echo "export status $? doc $doc"
-          ls -la "/run/user/$(id -u)/doc" "$(dirname "$doc")"
-          flatpak run dev.eclipse.TestApp "$doc" ~/private.txt
-          echo "run status $?"
           inside="/run/flatpak/doc/${doc#/run/user/*/doc/}"
-          flatpak run dev.eclipse.TestApp "$inside" ~/private.txt
-          echo "run inside status $?"
+          echo "inside=$inside" >> "$GITHUB_ENV"
+          systemctl --user is-active graphical-session.target
+          time flatpak run dev.eclipse.TestApp "$inside" ~/private.txt
+          systemctl --user start xdg-desktop-portal.service
+          echo "start status $?"
+          systemctl --user status xdg-desktop-portal.service | cat
+      - name: With a graphical session
+        run: |
+          set +e
+          # what a session does that has no service of its own for its compositor
+          cat > ~/.config/systemd/user/probe-session.target <<'EOF'
+          [Unit]
+          Description=Probe session
+          BindsTo=graphical-session.target
+          Before=graphical-session.target
+          Wants=graphical-session-pre.target
+          After=graphical-session-pre.target
+          EOF
+          systemctl --user daemon-reload
+          systemctl --user start probe-session.target
+          echo "start status $?"
+          systemctl --user is-active probe-session.target graphical-session.target | cat
+          time flatpak run dev.eclipse.TestApp "$inside" ~/private.txt
+          systemctl --user status xdg-desktop-portal.service | cat
           echo "without the network:"
           flatpak run --unshare=network dev.eclipse.TestApp "$inside" ~/private.txt
-          echo "settings:"
+          echo "settings with no backend:"
           flatpak run --command=gdbus dev.eclipse.TestApp call --session --timeout 10 --dest org.freedesktop.portal.Desktop \
             --object-path /org/freedesktop/portal/desktop --method org.freedesktop.portal.Settings.ReadOne org.freedesktop.appearance color-scheme
-          echo "documents mount point:"
-          flatpak run --command=gdbus dev.eclipse.TestApp call --session --timeout 10 --dest org.freedesktop.portal.Documents \
-            --object-path /org/freedesktop/portal/documents --method org.freedesktop.portal.Documents.GetMountPoint
-          echo "the scope while it runs:"
-          flatpak run --command=sh dev.eclipse.TestApp -c 'cat /proc/self/cgroup; sleep 5' &
-          sleep 3
-          systemctl --user list-units --full --plain --no-legend 'app-flatpak-*' | cat
-          flatpak ps
-          wait
-          systemctl --user list-units --full --plain --no-legend '*portal*' '*flatpak*' | cat
+          echo "unexport:"
+          flatpak document-unexport ~/private.txt
+          echo "unexport status $?"
+          flatpak run dev.eclipse.TestApp "$inside" ~/private.txt
       - name: Logs
         if: always()
         run: |
           set +e
-          sudo journalctl _UID=$(id -u) --no-pager | tail -n 150
+          sudo journalctl _SYSTEMD_USER_UNIT=xdg-desktop-portal.service _SYSTEMD_USER_UNIT=xdg-document-portal.service --no-pager | tail -n 60
+          sudo journalctl _UID=$(id -u) --no-pager | grep -i 'portal\|flatpak\|graphical' | tail -n 60
