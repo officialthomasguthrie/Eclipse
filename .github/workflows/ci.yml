@@ -46,21 +46,12 @@ jobs:
           flatpak install --user --noninteractive --bundle test-flatpak/platform.flatpak
           flatpak install --user --noninteractive --bundle test-flatpak/app.flatpak
           flatpak list --user --columns=application,branch | cat
-      - name: Without a graphical session
+      - name: With a graphical session from the start
         run: |
           set +e
           printf 'Kept out of the sandbox 5813\n' > ~/private.txt
           doc=$(flatpak document-export --app=dev.eclipse.TestApp ~/private.txt)
           inside="/run/flatpak/doc/${doc#/run/user/*/doc/}"
-          echo "inside=$inside" >> "$GITHUB_ENV"
-          systemctl --user is-active graphical-session.target
-          time flatpak run dev.eclipse.TestApp "$inside" ~/private.txt
-          systemctl --user start xdg-desktop-portal.service
-          echo "start status $?"
-          systemctl --user status xdg-desktop-portal.service | cat
-      - name: With a graphical session
-        run: |
-          set +e
           # what a session does that has no service of its own for its compositor
           cat > ~/.config/systemd/user/probe-session.target <<'EOF'
           [Unit]
