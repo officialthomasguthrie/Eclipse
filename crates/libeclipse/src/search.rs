@@ -812,13 +812,15 @@ mod tests {
     #[test]
     fn the_index_is_in_the_owners_cache() {
         let home = Path::new("/home/eclipse");
+        // an absolute path on every system, /tmp is not one on windows
+        let cache = std::env::temp_dir().join("cache");
         assert_eq!(
             index_path(home, None),
             Path::new("/home/eclipse/.cache/eclipse/search.index")
         );
         assert_eq!(
-            index_path(home, Some(OsStr::new("/tmp/cache"))),
-            Path::new("/tmp/cache/eclipse/search.index")
+            index_path(home, Some(cache.as_os_str())),
+            cache.join("eclipse").join("search.index")
         );
         assert_eq!(
             index_path(home, Some(OsStr::new("relative"))),
