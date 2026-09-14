@@ -1,20 +1,25 @@
 //! `eclipse ai`: a question for Aura from the terminal. An answer is printed. A command Aura
 //! proposes is printed as well and follows the rule Corona's field follows: one that only reads
 //! runs at once, one that changes something runs after a yes. Without a question it prints
-//! Aura's state.
+//! Aura's state. `eclipse ai index` and `eclipse ai search` are search by meaning in home.
 
 use std::process::ExitCode;
 
 use libeclipse::aura::{self, Reply, Status};
 use libeclipse::os::{self, Action};
 
-use crate::text;
+use crate::{search, text};
 
-const USAGE: &str = "Usage: eclipse ai [--yes] [question]";
+const USAGE: &str = "Usage: eclipse ai [--yes] [question]
+       eclipse ai index
+       eclipse ai search <words>";
 
 const HELP: &str = "Asks Aura a question and prints the answer. When Aura proposes a command that \
 changes something, it runs only after you confirm it, or at once with --yes. Without a question, \
-shows which model Aura runs and whether it is ready.";
+shows which models Aura runs and whether they are ready.
+
+  index    bring the search index of your home folder up to date. It also runs every 15 minutes.
+  search   list the files in your home folder closest in meaning to the words, best first.";
 
 pub fn run(args: &[String]) -> ExitCode {
     let (yes, words) = match args.first().map(String::as_str) {
@@ -22,6 +27,8 @@ pub fn run(args: &[String]) -> ExitCode {
             println!("{USAGE}\n\n{HELP}");
             return ExitCode::SUCCESS;
         }
+        Some("index") => return search::index(&args[1..]),
+        Some("search") => return search::search(&args[1..]),
         Some("--yes" | "-y") => (true, &args[1..]),
         _ => (false, args),
     };
@@ -75,6 +82,15 @@ fn rows(status: &Status) -> Vec<(&'static str, String)> {
     if !status.error.is_empty() {
         rows.push(("Error", status.error.clone()));
     }
+    let search = if status.embedding_model.is_empty() {
+        status.embedding_state.clone()
+    } else {
+        format!("{}, {}", status.embedding_state, status.embedding_model)
+    };
+    rows.push(("Search", search));
+    if !status.embedding_error.is_empty() {
+        rows.push(("Search error", status.embedding_error.clone()));
+    }
     rows
 }
 
@@ -113,16 +129,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_ready_model_is_three_rows() {
+    fn ready_models_are_four_rows() {
         let ready = Status {
             state: "ready".into(),
             model: "qwen3-0.6b-q8_0".into(),
             tier: "small".into(),
             error: String::new(),
+            embedding_state: "ready".into(),
+            embedding_model: "nomic-embed-text-v1.5-q8".into(),
+            embedding_error: String::new(),
         };
         assert_eq!(
             text::table(&rows(&ready)),
-            "State: ready\nModel: qwen3-0.6b-q8_0\nTier:  small\n"
+            "State:  ready\nModel:  qwen3-0.6b-q8_0\nTier:   small\n\
+             Search: ready, nomic-embed-text-v1.5-q8\n"
         );
     }
 
@@ -133,6 +153,11 @@ mod tests {
             model: String::new(),
             tier: "small".into(),
             error: "No chat model that fits this machine is on the drive.".into(),
+            embedding_state: "none".into(),
+            embedding_model: String::new(),
+            embedding_error:
+                "Search by meaning needs nomic-embed-text-v1.5.Q8_0.gguf, which is not on the drive."
+                    .into(),
         };
         assert_eq!(
             rows(&none),
@@ -143,6 +168,13 @@ mod tests {
                 (
                     "Error",
                     "No chat model that fits this machine is on the drive.".to_string()
+                ),
+                ("Search", "none".to_string()),
+                (
+                    "Search error",
+                    "Search by meaning needs nomic-embed-text-v1.5.Q8_0.gguf, which is not on \
+                     the drive."
+                        .to_string()
                 ),
             ]
         );

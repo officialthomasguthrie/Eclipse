@@ -1,9 +1,9 @@
-//! llama-server as aurad's child. aurad picks the model, starts the server on a unix socket in its
-//! own runtime directory, marks it ready once the model has loaded, and starts it again when it
-//! stops. Nothing but aura's user can open the socket; everything else on the machine goes through
-//! the local api in `api`. The
-//! models directory is looked at again every time, so a model copied onto the drive is picked up
-//! without touching the unit.
+//! llama-server as aurad's child, one for the chat model and one for the embedding model. aurad
+//! picks the model, starts the server on a unix socket in its own runtime directory, marks it
+//! ready once the model has loaded, and starts it again when it stops. Nothing but aura's user can
+//! open the sockets; everything else on the machine goes through the local api in `api` and the
+//! bus. The models directory is looked at again every time, so a model copied onto the drive is
+//! picked up without touching the unit.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,7 +13,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::http;
-use crate::models::{Manifest, Tier};
 
 /// How often the child is looked at.
 const POLL: Duration = Duration::from_secs(1);
@@ -53,14 +52,14 @@ impl State {
     }
 }
 
-/// What the bus reports about the backend.
+/// What the bus reports about a backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Status {
     /// Where the backend is.
     pub state: State,
     /// Manifest id of the model that runs or loads. Empty when there is none.
     pub model: String,
-    /// Syzygy's tier. Empty when it did not say.
+    /// Syzygy's tier. Empty when it did not say, and for the embedding model.
     pub tier: String,
     /// Why nothing answers, in a sentence. Empty when the model runs.
     pub error: String,
@@ -77,6 +76,47 @@ impl Default for Status {
     }
 }
 
+/// What a server is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// The chat model, which answers questions.
+    Chat,
+    /// The embedding model, which turns text into vectors for search by meaning.
+    Embedding,
+}
+
+impl Role {
+    /// How a sentence names the model.
+    const fn model(self) -> &'static str {
+        match self {
+            Self::Chat => "The model",
+            Self::Embedding => "The embedding model",
+        }
+    }
+
+    /// How the log names the server.
+    const fn server(self) -> &'static str {
+        match self {
+            Self::Chat => "llama-server",
+            Self::Embedding => "the embedding server",
+        }
+    }
+}
+
+/// The model a server runs, and a line for the log that says why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Picked {
+    /// Manifest id.
+    pub id: String,
+    /// File name under the models directory.
+    pub file: String,
+    /// Why this one.
+    pub reason: String,
+}
+
+/// Picks the model a server runs, given whether a file is in the models directory.
+pub type Pick<'a> = dyn Fn(&dyn Fn(&str) -> bool) -> Result<Picked, String> + 'a;
+
 /// How to run llama-server.
 pub struct Backend {
     /// The llama-server program.
@@ -87,39 +127,46 @@ pub struct Backend {
     pub socket: PathBuf,
     /// Context size in tokens.
     pub ctx_size: u32,
+    /// Chat or embeddings.
+    pub role: Role,
 }
 
 impl Backend {
     /// llama-server's arguments for one model. It listens on the unix socket only, serves no web
-    /// page and never fetches anything.
+    /// page and never fetches anything. An embedding server reads each text in one batch, and it
+    /// refuses a text longer than the batch, so the batch is as long as the context.
     pub fn args(&self, model: &Path, alias: &str) -> Vec<String> {
-        [
+        let socket = self.socket.display().to_string();
+        let model = model.display().to_string();
+        let ctx_size = self.ctx_size.to_string();
+        let mut args = vec![
             "--host",
-            &self.socket.display().to_string(),
+            &socket,
             "--model",
-            &model.display().to_string(),
+            &model,
             "--alias",
             alias,
             "--ctx-size",
-            &self.ctx_size.to_string(),
+            &ctx_size,
             "--no-webui",
             "--offline",
-        ]
-        .iter()
-        .map(ToString::to_string)
-        .collect()
+        ];
+        if self.role == Role::Embedding {
+            args.extend([
+                "--embedding",
+                "--batch-size",
+                &ctx_size,
+                "--ubatch-size",
+                &ctx_size,
+            ]);
+        }
+        args.into_iter().map(ToString::to_string).collect()
     }
 
-    /// Runs the backend for as long as aurad runs. `notify` is called after every change to
-    /// `status`, with the lock released.
-    pub fn supervise(
-        &self,
-        manifest: &Manifest,
-        tier: Option<Tier>,
-        named: Option<&str>,
-        status: &Mutex<Status>,
-        notify: &dyn Fn(),
-    ) -> ! {
+    /// Runs the backend for as long as aurad runs. `pick` says which model runs, given whether a
+    /// file is in the models directory. `notify` is called after every change to `status`, with
+    /// the lock released.
+    pub fn supervise(&self, pick: &Pick<'_>, status: &Mutex<Status>, notify: &dyn Fn()) -> ! {
         let update = |state: State, model: &str, error: &str| {
             let changed = {
                 let mut status = status.lock().unwrap_or_else(PoisonError::into_inner);
@@ -138,8 +185,8 @@ impl Backend {
         let mut said = String::new();
         loop {
             let on_drive = |file: &str| self.models_dir.join(file).is_file();
-            let pick = match manifest.pick(tier, named, on_drive) {
-                Ok(pick) => pick,
+            let picked = match pick(&on_drive) {
+                Ok(picked) => picked,
                 Err(why) => {
                     if why != said {
                         println!("aura: {why}");
@@ -150,13 +197,13 @@ impl Backend {
                     continue;
                 }
             };
-            if pick.reason != said {
-                println!("aura: {}", pick.reason);
-                said.clone_from(&pick.reason);
+            if picked.reason != said {
+                println!("aura: {}", picked.reason);
+                said.clone_from(&picked.reason);
             }
 
-            let model = pick.chat.id.as_str();
-            let path = self.models_dir.join(&pick.chat.file);
+            let model = picked.id.as_str();
+            let path = self.models_dir.join(&picked.file);
             update(State::Loading, model, "");
             // a server that stopped leaves its socket behind, and a new one cannot bind over it
             let _ = fs::remove_file(&self.socket);
@@ -190,13 +237,17 @@ impl Backend {
 
             delay = next_delay(delay, started.elapsed());
             println!(
-                "aura: llama-server stopped ({exit}), starting it again in {} s",
+                "aura: {} stopped ({exit}), starting it again in {} s",
+                self.role.server(),
                 delay.as_secs()
             );
             update(
                 State::Failed,
                 model,
-                &format!("The model stopped ({exit}). Aura starts it again."),
+                &format!(
+                    "{} stopped ({exit}). Aura starts it again.",
+                    self.role.model()
+                ),
             );
             thread::sleep(delay);
         }
@@ -223,32 +274,52 @@ pub fn next_delay(previous: Duration, ran: Duration) -> Duration {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_server_listens_on_its_socket_and_fetches_nothing() {
-        let backend = Backend {
+    fn backend(role: Role, socket: &str, ctx_size: u32) -> Backend {
+        Backend {
             program: PathBuf::from("llama-server"),
             models_dir: PathBuf::from("/var/lib/eclipse/models"),
-            socket: PathBuf::from("/run/aura/llama.sock"),
-            ctx_size: 8192,
-        };
-        let args = backend.args(
+            socket: PathBuf::from(socket),
+            ctx_size,
+            role,
+        }
+    }
+
+    fn after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+        let at = args.iter().position(|arg| arg == flag)?;
+        Some(args[at + 1].as_str())
+    }
+
+    #[test]
+    fn the_server_listens_on_its_socket_and_fetches_nothing() {
+        let args = backend(Role::Chat, "/run/aura/llama.sock", 8192).args(
             Path::new("/var/lib/eclipse/models/Qwen3-0.6B-Q8_0.gguf"),
             "qwen3-0.6b-q8_0",
         );
-        let after = |flag: &str| {
-            let at = args.iter().position(|arg| arg == flag).unwrap();
-            args[at + 1].as_str()
-        };
-        assert_eq!(after("--host"), "/run/aura/llama.sock");
+        assert_eq!(after(&args, "--host"), Some("/run/aura/llama.sock"));
         assert!(!args.iter().any(|arg| arg == "--port"));
         assert_eq!(
-            after("--model"),
-            "/var/lib/eclipse/models/Qwen3-0.6B-Q8_0.gguf"
+            after(&args, "--model"),
+            Some("/var/lib/eclipse/models/Qwen3-0.6B-Q8_0.gguf")
         );
-        assert_eq!(after("--alias"), "qwen3-0.6b-q8_0");
-        assert_eq!(after("--ctx-size"), "8192");
+        assert_eq!(after(&args, "--alias"), Some("qwen3-0.6b-q8_0"));
+        assert_eq!(after(&args, "--ctx-size"), Some("8192"));
         assert!(args.iter().any(|arg| arg == "--no-webui"));
         assert!(args.iter().any(|arg| arg == "--offline"));
+        assert!(!args.iter().any(|arg| arg == "--embedding"));
+    }
+
+    #[test]
+    fn the_embedding_server_reads_a_whole_context_in_one_batch() {
+        let args = backend(Role::Embedding, "/run/aura/embed.sock", 2048).args(
+            Path::new("/var/lib/eclipse/models/nomic-embed-text-v1.5.Q8_0.gguf"),
+            "nomic-embed-text-v1.5-q8",
+        );
+        assert_eq!(after(&args, "--host"), Some("/run/aura/embed.sock"));
+        assert!(args.iter().any(|arg| arg == "--embedding"));
+        assert!(args.iter().any(|arg| arg == "--offline"));
+        for flag in ["--ctx-size", "--batch-size", "--ubatch-size"] {
+            assert_eq!(after(&args, flag), Some("2048"), "{flag}");
+        }
     }
 
     #[test]

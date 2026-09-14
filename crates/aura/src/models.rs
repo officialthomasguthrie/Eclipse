@@ -1,16 +1,19 @@
-//! Which chat model runs. The manifest is the one list of models, Syzygy's tier says how much
-//! memory this machine has, and the models directory says what is really on the drive.
+//! Which models run. The manifest is the one list of models, Syzygy's tier says how much memory
+//! this machine has, and the models directory says what is really on the drive.
 
 use std::path::Path;
 
 use serde::Deserialize;
 
 /// The part of the model manifest Aura reads. Everything else in the file is ignored.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Manifest {
     /// Chat models, in the order the manifest lists them.
     #[serde(default)]
     pub chat: Vec<Chat>,
+    /// Embedding models, for search by meaning.
+    #[serde(default)]
+    pub embedding: Vec<Embedding>,
 }
 
 /// One chat model from the manifest.
@@ -28,6 +31,21 @@ pub struct Chat {
     pub test: bool,
     /// What a machine needs to run it.
     pub tier: Needs,
+}
+
+/// One embedding model from the manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Embedding {
+    /// Short name.
+    pub id: String,
+    /// File name under the models directory.
+    pub file: String,
+    /// What goes in front of the words a person searches with.
+    #[serde(default)]
+    pub query_prefix: String,
+    /// What goes in front of a text that is searched.
+    #[serde(default)]
+    pub document_prefix: String,
 }
 
 /// Memory a model needs, in gigabytes.
@@ -195,6 +213,27 @@ fn fits(chat: &Chat, ram_gb: u32) -> bool {
     chat.tier.min_vram_gb == 0 && chat.tier.min_ram_gb <= ram_gb
 }
 
+impl Manifest {
+    /// Picks the embedding model to run: the first one the manifest lists that is on the drive.
+    /// One is as good as another for a machine of any size, they are all small.
+    ///
+    /// # Errors
+    ///
+    /// A sentence that says why search by meaning cannot run.
+    pub fn pick_embedding(&self, on_drive: impl Fn(&str) -> bool) -> Result<&Embedding, String> {
+        self.embedding
+            .iter()
+            .find(|model| on_drive(&model.file))
+            .ok_or_else(|| match self.embedding.first() {
+                Some(model) => format!(
+                    "Search by meaning needs {}, which is not on the drive.",
+                    model.file
+                ),
+                None => "The model manifest has no embedding model.".into(),
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,7 +289,30 @@ file = "embed.gguf"
         assert!(manifest.chat[0].test);
         assert!(manifest.chat[2].default);
         assert_eq!(manifest.chat[3].tier.min_vram_gb, 12);
+        assert_eq!(manifest.embedding.len(), 1);
+        assert_eq!(manifest.embedding[0].query_prefix, "");
         assert!(Manifest::parse("[[chat]]\nid = \"x\"\n").is_err());
+    }
+
+    #[test]
+    fn the_first_embedding_model_on_the_drive_runs() {
+        let manifest = Manifest::parse(
+            "[[embedding]]\nid = \"a\"\nfile = \"a.gguf\"\n\n\
+             [[embedding]]\nid = \"b\"\nfile = \"b.gguf\"\n",
+        )
+        .unwrap();
+        let id = |files| {
+            manifest
+                .pick_embedding(drive(files))
+                .map(|model| model.id.as_str())
+        };
+        assert_eq!(id(&["a.gguf", "b.gguf"]), Ok("a"));
+        assert_eq!(id(&["b.gguf"]), Ok("b"));
+        assert_eq!(
+            id(&[]),
+            Err("Search by meaning needs a.gguf, which is not on the drive.".to_string())
+        );
+        assert!(Manifest::default().pick_embedding(|_| true).is_err());
     }
 
     #[test]
@@ -358,5 +420,11 @@ file = "embed.gguf"
             .pick(Some(Tier::Small), None, move |f| f == file)
             .unwrap();
         assert_eq!(pick.chat.id, "qwen3-0.6b-q8_0");
+
+        // search by meaning, with the words nomic wants in front of each side
+        let embedding = manifest.pick_embedding(|_| true).unwrap();
+        assert_eq!(embedding.id, "nomic-embed-text-v1.5-q8");
+        assert_eq!(embedding.query_prefix, "search_query: ");
+        assert_eq!(embedding.document_prefix, "search_document: ");
     }
 }

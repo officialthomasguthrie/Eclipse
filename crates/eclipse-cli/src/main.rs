@@ -10,6 +10,7 @@ mod host;
 mod net;
 mod restore;
 mod run;
+mod search;
 mod snapshot;
 mod text;
 
@@ -43,7 +44,11 @@ const COMMANDS: &[(&str, &str, &str)] = &[
         "Show what Syzygy remembers about this machine",
         "Phase 1",
     ),
-    ("ai", "Ask Aura a question from the terminal", "Phase 1"),
+    (
+        "ai",
+        "Ask Aura a question, or search home by meaning",
+        "Phase 1",
+    ),
     ("run", "Run a command inside a Penumbra sandbox", "Phase 2"),
     (
         "net",

@@ -1,6 +1,6 @@
 //! Names, D-Bus addresses and paths shared by every Eclipse component, the OS commands Corona and
-//! the eclipse command run, the client side of the services on the system bus, and how a drive is
-//! written.
+//! the eclipse command run, the client side of the services on the system bus, the index for
+//! search by meaning, and how a drive is written.
 //!
 //! Apache-2.0 so other people can embed it. Keep it dependency free: only the `bus` feature,
 //! which the asking side of the bus turns on, brings in zbus, and only the `disk` feature serde and
@@ -12,6 +12,7 @@ pub mod bus;
 pub mod disk;
 pub mod os;
 pub mod penumbra;
+pub mod search;
 pub mod syzygy;
 pub mod vault;
 

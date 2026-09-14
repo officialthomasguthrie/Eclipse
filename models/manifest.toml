@@ -88,16 +88,19 @@ license = "Apache-2.0"
 shipped = false
 tier = { min_ram_gb = 48, min_vram_gb = 24 }
 
-# embeddings for search by meaning
+# embeddings for search by meaning. aura runs the first one that is on the drive, and the boot test
+# runs this one too. nomic wants a word in front of each text that says which side of a search it is on
 
 [[embedding]]
 id = "nomic-embed-text-v1.5-q8"
 file = "nomic-embed-text-v1.5.Q8_0.gguf"
 url = "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf"
-sha256 = ""
+sha256 = "3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7"
 size_gb = 0.15
 license = "Apache-2.0"
 shipped = true
+query_prefix = "search_query: "
+document_prefix = "search_document: "
 
 # speech to text
 

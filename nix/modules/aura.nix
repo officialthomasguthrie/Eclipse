@@ -1,7 +1,8 @@
 # aura: local ai. aurad picks a chat model from the manifest for the tier syzygy reports, runs
 # llama-server (vulkan + cpu) as its child on a unix socket only aura's user can open, serves the
-# local api on 127.0.0.1 in front of it and answers on the system bus as dev.eclipse.Aura.
-# whisper and piper come later.
+# local api on 127.0.0.1 in front of it and answers on the system bus as dev.eclipse.Aura. a second
+# llama-server runs the embedding model for search by meaning, and the owner's own timer keeps an
+# index of home with it. whisper and piper come later.
 {
   config,
   lib,
@@ -12,6 +13,8 @@
 let
   cfg = config.eclipse.aura;
   busName = "dev.eclipse.Aura";
+  # the embedding model aurad runs for search by meaning. the index waits for its file
+  embedding = builtins.head (lib.importTOML ../../models/manifest.toml).embedding;
   # anyone on the machine may ask and read the properties. only aura's own user owns the name
   policy = pkgs.writeTextFile {
     name = "aura-dbus-policy";
@@ -109,6 +112,7 @@ in
             "--llama-server ${cfg.package}/bin/llama-server"
             "--port ${toString cfg.port}"
             "--socket /run/aura/llama.sock"
+            "--embedding-socket /run/aura/embed.sock"
             "--ctx-size ${toString cfg.contextSize}"
           ]
           ++ lib.optional (cfg.model != null) "--model ${cfg.model}"
@@ -133,6 +137,28 @@ in
         ProtectSystem = "strict";
         ProtectHome = true;
         NoNewPrivileges = true;
+      };
+    };
+
+    # search by meaning. the owner's user manager keeps the index of home in the owner's cache:
+    # eclipse ai index reads the files and aura only turns their text into vectors. the first run
+    # waits until the session has settled, then one runs 15 minutes after the last ended
+    systemd.user.services.aura-index = {
+      description = "Aura, the search index of home";
+      unitConfig.ConditionPathExists = "${cfg.modelsDir}/${embedding.file}";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${cfg.daemon}/bin/eclipse ai index";
+        Nice = 19;
+        IOSchedulingClass = "idle";
+      };
+    };
+    systemd.user.timers.aura-index = {
+      description = "Aura, the search index of home, every 15 minutes";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnStartupSec = "10min";
+        OnUnitInactiveSec = "15min";
       };
     };
   };

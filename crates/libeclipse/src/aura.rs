@@ -15,6 +15,10 @@ use crate::{Component, bus};
 #[cfg(feature = "bus")]
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How long the vectors for one call to `Embed` may take. aurad gives the model two minutes.
+#[cfg(feature = "bus")]
+const EMBED_TIMEOUT: Duration = Duration::from_secs(150);
+
 /// What a reply to `Ask` means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reply {
@@ -37,6 +41,12 @@ pub struct Status {
     pub tier: String,
     /// Why nothing answers, in a sentence. Empty when the model runs.
     pub error: String,
+    /// The embedding model's state, for search by meaning: `none`, `loading`, `ready` or `failed`.
+    pub embedding_state: String,
+    /// Manifest id of the embedding model that runs or loads. Empty when there is none.
+    pub embedding_model: String,
+    /// Why search by meaning cannot run, in a sentence. Empty when the embedding model runs.
+    pub embedding_error: String,
 }
 
 /// What the two strings `Ask` returned mean.
@@ -94,7 +104,43 @@ pub fn status() -> Result<Status, String> {
         model: get("Model")?,
         tier: get("Tier")?,
         error: get("Error")?,
+        embedding_state: get("EmbeddingState")?,
+        embedding_model: get("EmbeddingModel")?,
+        embedding_error: get("EmbeddingError")?,
     })
+}
+
+/// A connection to aurad that stays open for many calls, such as the vectors for every part of
+/// every file in home.
+#[cfg(feature = "bus")]
+pub struct Client {
+    proxy: zbus::blocking::Proxy<'static>,
+}
+
+#[cfg(feature = "bus")]
+impl Client {
+    /// Connects to the system bus.
+    ///
+    /// # Errors
+    ///
+    /// A sentence when the bus or Aura is not there.
+    pub fn connect() -> Result<Self, String> {
+        let connection = bus::connect(EMBED_TIMEOUT)?;
+        let proxy = bus::proxy(&connection, Component::Aura)?;
+        Ok(Self { proxy })
+    }
+
+    /// A vector for each text, in their order. `kind` is `query` for the words a person searches
+    /// with and `document` for the parts of a file.
+    ///
+    /// # Errors
+    ///
+    /// A sentence when Aura is not there or could not make the vectors.
+    pub fn embed(&self, kind: &str, texts: &[String]) -> Result<Vec<Vec<f64>>, String> {
+        self.proxy
+            .call("Embed", &(kind, texts))
+            .map_err(|e| bus::sentence(Component::Aura, e))
+    }
 }
 
 #[cfg(test)]

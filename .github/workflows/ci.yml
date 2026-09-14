@@ -436,28 +436,40 @@ jobs:
       - name: Open kvm to the runner
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; ls -l /dev/kvm; else echo "no /dev/kvm, qemu will use tcg"; fi
-      - name: Read the test model from the manifest
+      - name: Read the test models from the manifest
+        # the chat model marked test, and the embedding model the image runs for search by meaning.
+        # every file in models/cache goes into the models subvolume
         id: model
         run: |
           python3 - >> "$GITHUB_OUTPUT" <<'EOF'
           import tomllib
           with open("models/manifest.toml", "rb") as f:
               manifest = tomllib.load(f)
-          [model] = [m for m in manifest["chat"] if m.get("test")]
-          for key in ("file", "url", "sha256"):
-              print(f"{key}={model[key]}")
+          [chat] = [m for m in manifest["chat"] if m.get("test")]
+          embedding = manifest["embedding"][0]
+          models = [chat, embedding]
+          with open("models/test-models.txt", "w") as f:
+              for model in models:
+                  f.write(f"{model['sha256']} {model['file']} {model['url']}\n")
+          print("key=" + "-".join(model["sha256"][:16] for model in models))
           EOF
-      - name: Cache the test model
+      - name: Cache the test models
         id: model-cache
         uses: actions/cache@v4
         with:
           path: models/cache
-          key: model-${{ steps.model.outputs.sha256 }}
-      - name: Download the test model
+          key: models-${{ steps.model.outputs.key }}
+      - name: Download the test models
         if: steps.model-cache.outputs.cache-hit != 'true'
-        run: curl -fL --retry 3 --create-dirs -o "models/cache/${{ steps.model.outputs.file }}" "${{ steps.model.outputs.url }}"
-      - name: Check the test model
-        run: echo "${{ steps.model.outputs.sha256 }}  models/cache/${{ steps.model.outputs.file }}" | sha256sum -c
+        run: |
+          while read -r sha256 file url; do
+            curl -fL --retry 3 --create-dirs -o "models/cache/$file" "$url"
+          done < models/test-models.txt
+      - name: Check the test models
+        run: |
+          while read -r sha256 file url; do
+            echo "$sha256  models/cache/$file"
+          done < models/test-models.txt | sha256sum -c
       - name: Check what eclipse-flash refuses
         # it runs as root here, and every disk of the runner is inside it. a loop device, each of the
         # runner's disks, a file that holds something and a file that is too small are refused, and

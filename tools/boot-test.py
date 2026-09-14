@@ -1250,6 +1250,89 @@ def main():
             fail(f"eclipse ai says {rows}, the bus says {wanted}")
         ok("eclipse ai printed the state, model and tier the bus gave")
 
+        # 4c. search by meaning. aurad runs the embedding model beside the chat model, and the owner's
+        # user manager has a unit that walks home, gets a vector for each part of a file from aura and
+        # keeps them in the owner's cache. aura never reads home. a search finds a file by what it
+        # means, with none of its words
+        embedding_deadline = time.monotonic() + args.aura_timeout
+        while True:
+            embedding_state = aura_prop("EmbeddingState")
+            if embedding_state == "ready":
+                break
+            if embedding_state in ("none", "failed") or time.monotonic() > embedding_deadline:
+                why = aura_prop("EmbeddingError")
+                fail(f"aura's embedding model is {embedding_state or 'not on the bus'} after {since()}: {why}")
+            time.sleep(5)
+        with open(manifest_path, "rb") as f:
+            embedding = tomllib.load(f)["embedding"][0]["id"]
+        if aura_prop("EmbeddingModel") != embedding:
+            fail(f"aura runs {aura_prop('EmbeddingModel')} for search, the manifest's embedding model is {embedding}")
+        status, printed = run("eclipse ai", "the search row of eclipse ai")
+        printed = without_console(printed)
+        if status != 0 or not re.search(rf"^Search:[ \t]+ready, {re.escape(embedding)}[ \t]*$", printed, re.M):
+            fail(f"eclipse ai does not say search is ready with {embedding}: {printed!r}")
+        ok(f"aura loaded {embedding} for search by meaning")
+
+        notes = "/home/eclipse/notes"
+        documents = {
+            "garden.md": ["Tomatoes want six hours of sun.", "Water the beans early and pull weeds before they seed."],
+            "bike.txt": ["Pump the tyres to 80 psi.",
+                         "Oil the chain every 300 km and change the brake pads when they squeal."],
+            "taxes.md": ["The return is due at the end of April.",
+                         "Keep the receipts for the home office deduction and the donations."],
+            "soup.txt": ["Chop two onions and a carrot, fry them in butter.", "Add stock and simmer for twenty minutes."],
+            "backup.py": ["import shutil", "", "def copy_to_disk(source, target):",
+                          "    shutil.copytree(source, target, dirs_exist_ok=True)"],
+        }
+        searches = {"bicycle repair": "bike.txt", "duplicate folders onto a drive": "backup.py"}
+        for words, name in searches.items():
+            text = (name + " " + " ".join(documents[name])).lower()
+            shared = [word for word in words.split() if len(word) > 3 and word in text]
+            if shared:
+                fail(f"the search for {words!r} shares {shared} with {name}, it would not be by meaning")
+        run(f"mkdir -p {notes}", "the folder for the files to search")
+        for name, lines in documents.items():
+            quoted = " ".join(f"'{line}'" for line in lines)
+            status, output = run(f"printf '%s\\n' {quoted} > {notes}/{name}", f"{notes}/{name}")
+            if status != 0:
+                fail(f"{notes}/{name} could not be written: {without_console(output).strip()!r}")
+
+        # the timer's unit, started now instead of ten minutes after login. start waits for a oneshot
+        status, output = run("systemctl --user start aura-index.service", "the index of home")
+        if status != 0:
+            fail(f"aura-index.service did not start: {without_console(output).strip()!r}")
+        _, output = run("systemctl --user show --property=Result,ExecMainStatus,ConditionResult aura-index.service | cat",
+                        "how the index unit ended")
+        shown = dict(re.findall(r"^(\w+)=(\S*)\s*$", without_console(output), re.M))
+        if shown.get("Result") != "success" or shown.get("ExecMainStatus") != "0" or shown.get("ConditionResult") != "yes":
+            fail(f"aura-index.service ended with {shown}")
+        _, output = run("stat -c 'index=%U:%a' ~/.cache/eclipse ~/.cache/eclipse/search.index", "the index's owner")
+        modes = re.findall(r"index=(\w+:\d+)", output)
+        if modes != ["eclipse:700", "eclipse:600"]:
+            fail(f"the index and its folder are {modes}, expected the owner's alone")
+
+        # nothing changed since, so a second update reads nothing again
+        status, printed = run("eclipse ai index", "a second update of the index")
+        printed = without_console(printed)
+        print(f"\nboot-test: eclipse ai index printed:\n{printed}", flush=True)
+        counted = re.search(r"(\d+) files? (?:is|are) in the index\. (\d+) (?:was|were) new or changed", printed)
+        if status != 0 or not counted:
+            fail(f"eclipse ai index exited with {status}: {printed!r}")
+        if int(counted.group(1)) < len(documents) or counted.group(2) != "0":
+            fail(f"eclipse ai index says {counted.group(0)!r}, expected the {len(documents)} files and none read again")
+
+        for words, name in searches.items():
+            status, printed = run(f"eclipse ai search {words}", f"a search for {words}")
+            printed = without_console(printed)
+            print(f"\nboot-test: eclipse ai search {words} printed:\n{printed}", flush=True)
+            rows = re.findall(r"^(~/\S+):(\d+)[ \t]+(\d{4}-\d{2}-\d{2})[ \t]*$", printed, re.M)
+            if status != 0 or not rows:
+                fail(f"eclipse ai search {words} exited with {status} and listed no files")
+            if rows[0][0] != f"~/notes/{name}":
+                fail(f"eclipse ai search {words} put {rows[0][0]} first, expected ~/notes/{name}")
+        ok("eclipse ai search found " + " and ".join(f"{name} for {words!r}" for words, name in searches.items())
+           + ", by meaning")
+
     # 4b. `eclipse doctor`: no check fails, and syzygy and aura each have a row. with the model
     # loaded, aura's row has to pass
     status, printed = run("eclipse doctor", "eclipse doctor")

@@ -582,6 +582,7 @@ Buffers:            2040 kB
             model: "qwen3-0.6b-q8_0".into(),
             tier: "small".into(),
             error: error.into(),
+            ..Status::default()
         };
         assert_eq!(
             aura_verdict(&status("ready", "")),
