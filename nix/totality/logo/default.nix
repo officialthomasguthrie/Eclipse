@@ -1,19 +1,20 @@
-# the logo in characters: a black hole, its disc and photon ring in warm colours. eclipse-logo.txt is
-# the full size and eclipse-logo-small.txt half of it for small terminals. both have fastfetch's $1
-# to $9 in front of each change of colour, and every line starts with its colour. these are the
-# colours, from xterm's 256, and the forms of each logo the image installs
+# the logo in characters: a black hole, its disc and photon ring in shades of one warm gold.
+# eclipse-logo.txt is the full size and eclipse-logo-small.txt half of it for small terminals. both
+# have fastfetch's $1 to $9 in front of each change of shade, and every line starts with its shade.
+# these are the nine shades from dim to pale, in true colour, and the forms of each logo the image
+# installs
 { lib }:
 let
   colours = [
-    "38;5;52"
-    "38;5;94"
-    "38;5;130"
-    "38;5;166"
-    "38;5;208"
-    "38;5;214"
-    "38;5;220"
-    "38;5;229"
-    "38;5;231"
+    "38;2;115;84;38"
+    "38;2;142;104;46"
+    "38;2;171;124;54"
+    "38;2;196;143;64"
+    "38;2;206;159;90"
+    "38;2;215;176;117"
+    "38;2;224;192;144"
+    "38;2;232;208;171"
+    "38;2;240;223;199"
   ];
   marks = lib.genList (i: "$" + toString (i + 1)) (builtins.length colours);
   # the escape character, which a nix string cannot hold, from a json one
@@ -56,4 +57,11 @@ forms ./eclipse-logo.txt
 // {
   inherit colours;
   small = forms ./eclipse-logo-small.txt;
+  # the full size logo drawn in type half the terminal's size, as a picture for terminals that show
+  # images. it fills the cells of the small logo
+  picture = {
+    file = ./eclipse-logo.png;
+    columns = 59;
+    rows = 16;
+  };
 }

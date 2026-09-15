@@ -11,8 +11,8 @@ let
   version = config.system.image.version;
   home = "https://github.com/officialthomasguthrie/Eclipse";
   logo = import ../totality/logo { inherit lib; };
-  # the logo is text and the modules below are all fastfetch shows, so its image, sound, X11 and
-  # desktop settings libraries stay out of the image
+  # the logo is text or a picture the terminal reads itself, and the modules below are all fastfetch
+  # shows, so its image, sound, X11 and desktop settings libraries stay out of the image
   fastfetch = pkgs.fastfetch.override {
     audioSupport = false;
     brightnessSupport = false;
@@ -71,6 +71,7 @@ in
   environment.etc."eclipse/logo.ansi".text = logo.ansi;
   environment.etc."eclipse/logo-small.txt".text = logo.small.plain;
   environment.etc."eclipse/logo-small.ansi".text = logo.small.ansi;
+  environment.etc."eclipse/logo.png".source = logo.picture.file;
 
   environment.systemPackages = [ fastfetch ];
   # fastfetch would pick the NixOS logo from ID_LIKE. the three lines at the end are Eclipse's own
@@ -129,8 +130,9 @@ in
 
   # the first shell of a login session on a text console or in a terminal window greets with
   # fastfetch, a serial line never does. a file ~/.config/eclipse/greeting that says off turns it
-  # off. the full logo goes where it fits next to fastfetch's rows, half of it where only that
-  # fits, and none in a terminal narrower still
+  # off. a terminal that shows images gets the logo as a picture, the full detail in the small
+  # logo's room. otherwise the full logo goes where it fits next to fastfetch's rows, half of it
+  # where only that fits, and none in a terminal narrower still
   programs.fish.interactiveShellInit = ''
     function fish_greeting
         set -q XDG_SESSION_ID XDG_RUNTIME_DIR; or return
@@ -142,11 +144,15 @@ in
         set -l mark $XDG_RUNTIME_DIR/eclipse-greeted-$XDG_SESSION_ID
         test -e $mark; and return
         true >$mark
-        if test $COLUMNS -ge ${
-          toString (logo.columns + infoColumns)
-        }; and test $LINES -ge ${toString (logo.rows + 2)}
+        set -l big ${toString (logo.columns + infoColumns)}
+        set -l tall ${toString (logo.rows + 2)}
+        set -l small ${toString (logo.small.columns + infoColumns)}
+        set -l picture ${toString (logo.picture.columns + infoColumns)}
+        if string match -q -r '^xterm-(ghostty|kitty)$' -- $TERM; and test $COLUMNS -ge $picture
+            fastfetch --logo-type kitty-direct --logo ${logo.picture.file} --logo-width ${toString logo.picture.columns} --logo-height ${toString logo.picture.rows}
+        else if test $COLUMNS -ge $big; and test $LINES -ge $tall
             fastfetch
-        else if test $COLUMNS -ge ${toString (logo.small.columns + infoColumns)}
+        else if test $COLUMNS -ge $small
             fastfetch --logo-type file --logo ${logo.small.file}
         else
             fastfetch --logo none
