@@ -2,7 +2,7 @@
 
 # Rift
 
-A portable Linux distribution that runs from a USB drive, keeps its owner's data encrypted on that drive, and leaves the host computer's disks untouched.
+A portable operating system that runs from a USB drive, keeps its owner's data encrypted on that drive, and leaves the host computer's disks untouched.
 
 <p>
 <a href="https://github.com/officialthomasguthrie/Rift/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/officialthomasguthrie/Rift/ci.yml?branch=main&style=flat-square&label=build&logo=githubactions&logoColor=white&labelColor=2e2e2e"></a>
