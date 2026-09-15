@@ -77,7 +77,15 @@
           };
           toolchain = pkgsRust.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           craneLib = (crane.mkLib pkgsRust).overrideToolchain toolchain;
-          src = craneLib.cleanCargoSource ./.;
+          # the cargo sources, and the logo in characters that liftoff-splash builds in
+          src = lib.cleanSourceWith {
+            src = craneLib.path ./.;
+            filter =
+              path: type:
+              craneLib.filterCargoSources path type
+              || lib.hasSuffix "/nix/liftoff/logo/rift-logo.txt" (toString path)
+              || lib.hasSuffix "/nix/liftoff/logo/rift-logo.colours" (toString path);
+          };
           # the compositor is built apart from the small crates: it pulls in smithay and a dozen
           # system libraries, and the rest of the workspace should stay cheap to build and check. the
           # rift-flash app runs on other systems, not on the drive, and ci builds it on all three
@@ -130,6 +138,23 @@
                   ]
                 }
               '';
+            }
+          );
+          # the text boot's plymouth plugin by itself. it runs inside plymouthd, so it is built with the
+          # profile that unwinds a panic instead of aborting
+          splashCommon = {
+            inherit src;
+            strictDeps = true;
+            pname = "liftoff-splash";
+            version = "0.1.0";
+            cargoExtraArgs = "-p liftoff-splash";
+            CARGO_PROFILE = "splash";
+          };
+          liftoffSplash = craneLib.buildPackage (
+            splashCommon
+            // {
+              cargoArtifacts = craneLib.buildDepsOnly splashCommon;
+              doCheck = false;
             }
           );
           # horizon reads shaders, a cursor image and its default config from next to the sources,
@@ -227,7 +252,10 @@
             inherit workspace;
             rift-flash = riftFlash;
           }
-          // lib.optionalAttrs pkgs.stdenv.isLinux { inherit horizon; }
+          // lib.optionalAttrs pkgs.stdenv.isLinux {
+            inherit horizon;
+            liftoff-splash = liftoffSplash;
+          }
           // lib.optionalAttrs isImageHost {
             image = os.system.build.image;
             # the files systemd-sysupdate installs the next version from

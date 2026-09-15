@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Liftoff graphical
+Description=A black disc crosses a light one while Rift starts.
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/liftoff-graphical
+ScriptFile=/usr/share/plymouth/themes/liftoff-graphical/liftoff.script

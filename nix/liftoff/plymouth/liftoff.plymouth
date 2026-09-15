@@ -1,8 +1,0 @@
-[Plymouth Theme]
-Name=Liftoff
-Description=A black disc crosses a light one while Rift boots. Liftoff is the desktop.
-ModuleName=script
-
-[script]
-ImageDir=/usr/share/plymouth/themes/liftoff
-ScriptFile=/usr/share/plymouth/themes/liftoff/liftoff.script

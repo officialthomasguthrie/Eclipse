@@ -76,9 +76,13 @@ and through `rift ai`.
 The local api has to refuse the same completion when the request comes with a web page's Origin or
 Host header, and the owner must not reach llama-server's socket behind it.
 
-With --splash the test also takes a screendump through the qemu monitor while the luks prompt is up
-and checks that the Liftoff splash is on screen: the light disc and the black disc from
-nix/liftoff/plymouth against the gray background. The dump is saved as a png.
+With --splash the test also takes a screendump through the qemu monitor while the luks prompt, or the
+first boot's first question, is up and checks that Liftoff's boot screen is on it. The text style, the
+default, is crates/liftoff-splash on its near black: the logo's ice in the block at the top left where
+the logo is drawn, and systemd's green OK in the console under it. With --style graphical the drive
+boots with plymouth.splash=liftoff-graphical, which a SMBIOS string hands systemd-stub for the kernel
+command line, and the screen has the mark from nix/liftoff/logo in the middle of the same near black. The dump is saved as a png. --splash-only ends the test when the shell is up after
+the splash.
 
 With --desktop the test checks that greetd is up and takes a screendump of the running session: horizon
 paints its background gray over the whole screen, a console would show black with text. The vm has a
@@ -223,11 +227,15 @@ def write_png(path, width, height, rgb):
         f.write(chunk(b"IEND", b""))
 
 
-# what the theme draws, from nix/liftoff/plymouth: background #1e1e1e, sun #cccccc, moon #000000
-BACKGROUND = (30, 30, 30)
-SUN = (204, 204, 204)
+# black, which a text console and the edges of a screen without a picture are
 MOON = (0, 0, 0)
-RING = 0.03
+# what the text boot draws, from crates/liftoff-splash: its near black, a cell at scale 1 with the logo
+# one cell in from the top left, and the green systemd writes OK in
+TEXT_BACKGROUND = (4, 4, 6)
+TEXT_CELL = (8, 16)
+OK_GREEN = (0, 170, 0)
+# the graphical theme's mark, which it scales to a fifth of the screen height in the middle
+MARK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "nix", "liftoff", "logo", "rift-mark.png")
 # what horizon paints with no window open, the background from nix/modules/horizon.nix
 DESKTOP = (36, 36, 36)
 # lens's panel, from crates/lens/src/ui.rs: panel gray, field gray, and the sizes in logical
@@ -282,42 +290,41 @@ def near(pixel, color, tolerance):
     return all(abs(a - b) <= tolerance for a, b in zip(pixel, color))
 
 
-def check_splash(width, height, rgb):
-    """Count the theme's colours in a screendump. Returns (ok, lines to print)."""
-    size = height // 5  # the theme scales the discs to a fifth of the screen height
-    cx, cy = width / 2, height / 2
-    sun_radius = size / 2 - 1
-    moon_radius = sun_radius - RING * size
-    sun_area = math.pi * sun_radius**2
-    moon_area = math.pi * moon_radius**2
-    ring_area = sun_area - moon_area
+def png_size(path):
+    """A png's width and height, from its header."""
+    with open(path, "rb") as f:
+        return struct.unpack(">II", f.read(24)[16:24])
 
-    background = black = light_in_sun = black_in_sun = 0
+
+def check_splash(width, height, rgb):
+    """Find the graphical theme in a screendump: its near black over most of the screen, and the
+    mark's ice in its box a fifth of the screen high in the middle and nowhere else. Returns (ok,
+    lines to print)."""
+    mark_width, mark_height = png_size(MARK)
+    size = height // 5
+    scaled = mark_width * size / mark_height
+    left, top = width / 2 - scaled / 2, height / 2 - size / 2
+    background = inside = outside = 0
     for y in range(height):
         row = y * width * 3
         for x in range(width):
             px = rgb[row + x * 3 : row + x * 3 + 3]
-            if near(px, BACKGROUND, 8):
+            if near(px, TEXT_BACKGROUND, 6):
                 background += 1
-                continue
-            is_black = near(px, MOON, 8)
-            if is_black:
-                black += 1
-            if math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= sun_radius + 1:
-                if is_black:
-                    black_in_sun += 1
-                elif near(px, SUN, 12):
-                    light_in_sun += 1
-
+            elif ice(px):
+                if left - 2 <= x < left + scaled + 2 and top - 2 <= y < top + size + 2:
+                    inside += 1
+                else:
+                    outside += 1
     total = width * height
+    # the mark's lines cover about a sixth of its box
     checks = [
-        ("background covers most of the screen", background >= 0.85 * total, f"{background} of {total}"),
-        ("the sun is where the theme puts it", 0.85 * sun_area <= light_in_sun + black_in_sun <= 1.1 * sun_area,
-         f"{light_in_sun} light + {black_in_sun} black, expected about {sun_area:.0f}"),
-        ("at least the ring of the sun shows", light_in_sun >= 0.6 * ring_area, f"{light_in_sun}, ring is {ring_area:.0f}"),
-        ("the moon is on screen", 0.8 * moon_area <= black <= 1.2 * moon_area, f"{black}, expected about {moon_area:.0f}"),
+        ("the background covers most of the screen", background >= 0.9 * total, f"{background} of {total}"),
+        ("the mark is where the theme puts it", inside >= 0.08 * scaled * size,
+         f"{inside} pixels of its ice in a box of {scaled:.0f}x{size}"),
+        ("and nothing else is in the logo's ice", outside <= 100, f"{outside} pixels outside it"),
     ]
-    lines = [f"splash: {width}x{height}, disc size {size}"]
+    lines = [f"splash: {width}x{height}, graphical style"]
     ok = True
     for name, passed, detail in checks:
         lines.append(f"splash: {'ok  ' if passed else 'FAIL'} {name}: {detail}")
@@ -408,6 +415,44 @@ def logo_lines():
 def ice(px):
     """The logo's blues, far more blue than red. The terminal's text and the grays are neither."""
     return px[2] >= 90 and px[2] - px[0] >= 40
+
+
+def check_text_splash(width, height, rgb):
+    """Count the text boot's colours in a screendump: its near black over most of the screen, the
+    logo's ice in the block at the top left where the logo is drawn and nowhere else, and systemd's
+    green in the console under the logo, an OK line or more. Returns (ok, lines to print)."""
+    cell_w, cell_h = TEXT_CELL
+    logo = logo_lines()
+    left, top = cell_w, cell_h
+    right, bottom = left + max(len(line) for line in logo) * cell_w, top + len(logo) * cell_h
+    background = ice_inside = ice_outside = green = 0
+    for y in range(height):
+        row = y * width * 3
+        for x in range(width):
+            px = rgb[row + x * 3 : row + x * 3 + 3]
+            if near(px, TEXT_BACKGROUND, 6):
+                background += 1
+            elif ice(px):
+                if left <= x < right and top <= y < bottom:
+                    ice_inside += 1
+                else:
+                    ice_outside += 1
+            elif y >= bottom and near(px, OK_GREEN, 24):
+                green += 1
+    total = width * height
+    # an OK in bold at this size is about 32 pixels of the green
+    checks = [
+        ("the background covers most of the screen", background >= 0.85 * total, f"{background} of {total}"),
+        ("the logo's ice is where the logo is drawn", ice_inside >= 3000, f"{ice_inside} pixels"),
+        ("and nowhere else", ice_outside <= 100, f"{ice_outside} pixels outside the logo"),
+        ("systemd's green OK is in the console under the logo", green >= 64, f"{green} pixels"),
+    ]
+    lines = [f"splash: {width}x{height}, text style"]
+    ok = True
+    for name, passed, detail in checks:
+        lines.append(f"splash: {'ok  ' if passed else 'FAIL'} {name}: {detail}")
+        ok = ok and passed
+    return ok, lines
 
 
 def check_console(width, height, rgb):
@@ -615,6 +660,10 @@ def main():
     ap.add_argument("--memory", default="4096")
     ap.add_argument("--qmp", help="unix socket for the qemu monitor")
     ap.add_argument("--splash", help="take a screendump at the luks prompt, check it, save it as this png")
+    ap.add_argument("--style", choices=("text", "graphical"), default="text",
+                    help="the boot style to check the splash for: text, the default, or graphical, which the drive "
+                    "gets through the kernel command line")
+    ap.add_argument("--splash-only", action="store_true", help="end once the shell is up after the splash")
     ap.add_argument("--desktop", help="take a screendump of the session, check it, save it as this png")
     ap.add_argument("--desktop-timeout", type=int, default=60, help="seconds for horizon to paint its first frame")
     ap.add_argument("--lens", action="store_true", help="expect lens's panel on the desktop")
@@ -658,6 +707,10 @@ def main():
     ]
     if args.qmp:
         cmd += ["-qmp", f"unix:{args.qmp},server,nowait"]
+    if args.style == "graphical":
+        # systemd-stub adds this SMBIOS string to the kernel command line of a drive booted without
+        # secure boot, and plymouth.splash picks the theme
+        cmd += ["-smbios", "type=11,value=io.systemd.stub.kernel-cmdline-extra=plymouth.splash=liftoff-graphical"]
     if args.updates:
         # a second nvme drive. nothing on the system mounts it, the test does
         cmd += ["-drive", f"if=none,id=updates,format=raw,file={os.path.abspath(args.updates)}",
@@ -760,7 +813,8 @@ def main():
         except (OSError, RuntimeError) as e:
             fail(f"screendump: {e}")
         write_png(args.splash, width, height, rgb)
-        good, lines = check_splash(width, height, rgb)
+        check = check_splash if args.style == "graphical" else check_text_splash
+        good, lines = check(width, height, rgb)
         print("\nboot-test: " + "\nboot-test: ".join(lines), flush=True)
         if not good:
             fail(f"the splash is not on screen, see {args.splash}")
@@ -770,6 +824,16 @@ def main():
         choose()
     else:
         unlock()
+
+    if args.splash_only:
+        child.send("sudo systemctl poweroff\r")
+        try:
+            child.expect(pexpect.EOF, timeout=90)
+        except pexpect.TIMEOUT:
+            print("\nboot-test: poweroff did not end qemu, killing it", flush=True)
+            child.terminate(force=True)
+        print(f"\nboot-test: PASSED in {since()}", flush=True)
+        return
 
     # 2. the system is ours
     child.send("rift --version\r")
@@ -788,6 +852,15 @@ def main():
     expect([r"/dev/mapper/persist\S*\s+btrfs"], "/home on persist")
     expect([PROMPT], "the prompt")
     ok(f"{version.strip()}, phase {phase}, home on persist")
+
+    # the status lines the text boot shows name the unit in bold, then describe it. systemd has no
+    # property for the format, and plymouth keeps the console it showed in /var/log/boot.log
+    status, output = run("sudo grep -a -c -E 'plymouth-start[.]service.* - Show Plymouth Boot Screen' /var/log/boot.log",
+                         "plymouth's log of the console")
+    found = re.search(r"^\s*(\d+)\s*$", without_console(output), re.M)
+    if status != 0 or not found or int(found.group(1)) < 1:
+        fail("plymouth's /var/log/boot.log has no status line that names the unit and then describes it: "
+             f"{without_console(output).strip()!r}")
 
     # 2a. the default apps are on the path, firefox has its policies, zed got its settings with
     # telemetry off, and podman runs rootless in the owner's ranges

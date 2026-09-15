@@ -1,38 +1,23 @@
-# the boot progress: a black disc slides over a light one until a thin ring is left.
-# neutral dark gray background, nothing else. pngs come from tools/gen-liftoff-assets.py, drawn large
-# and scaled here to a fifth of the screen height so the same theme fits every mode.
+# the graphical boot: the mark, the black hole in the logo's ice, in the middle of the near black the
+# logo was drawn on, and nothing else. mark.png is nix/liftoff/logo/rift-mark.png, scaled here to a
+# fifth of the screen height so the same theme fits every mode. dot.png comes from
+# tools/gen-liftoff-assets.py.
 
-Window.SetBackgroundTopColor(0.118, 0.118, 0.118);
-Window.SetBackgroundBottomColor(0.118, 0.118, 0.118);
+Window.SetBackgroundTopColor(0.016, 0.016, 0.024);
+Window.SetBackgroundBottomColor(0.016, 0.016, 0.024);
 
 cx = Window.GetWidth() / 2;
 cy = Window.GetHeight() / 2;
 size = Math.Int(Window.GetHeight() / 5);
 
-sun.image = Image("sun.png").Scale(size, size);
-moon.image = Image("moon.png").Scale(size, size);
+mark.full = Image("mark.png");
+mark.image = mark.full.Scale(Math.Int(mark.full.GetWidth() * size / mark.full.GetHeight()), size);
+mark.sprite = Sprite(mark.image);
+mark.sprite.SetPosition(cx - mark.image.GetWidth() / 2, cy - size / 2, 1);
+
 dot.image = Image("dot.png").Scale(Math.Int(size / 16), Math.Int(size / 16));
 
-sun.sprite = Sprite(sun.image);
-sun.sprite.SetPosition(cx - size / 2, cy - size / 2, 1);
-
-moon.sprite = Sprite(moon.image);
-
-# the moon starts a little right of centre, so a crescent of the sun shows, and slides to liftoff
-travel = size * 0.3;
-
-fun place_moon(p) {
-  moon.sprite.SetPosition(cx - size / 2 + travel * (1 - p), cy - size / 2, 2);
-}
-
-place_moon(0);
-
-fun boot_progress_cb(duration, p) {
-  place_moon(p);
-}
-Plymouth.SetBootProgressFunction(boot_progress_cb);
-
-# the passphrase prompt under the sun: the question and one dot per character. systemd-cryptsetup
+# the passphrase prompt under the mark: the question and one dot per character. systemd-cryptsetup
 # asks in words of its own, which read here as a plain request. a new drive asks its own questions
 prompt.sprite = Sprite();
 dot.step = Math.Int(size / 8);
@@ -70,8 +55,3 @@ fun display_normal_cb() {
     dots[i].sprite.SetOpacity(0);
 }
 Plymouth.SetDisplayNormalFunction(display_normal_cb);
-
-fun quit_cb() {
-  place_moon(1);
-}
-Plymouth.SetQuitFunction(quit_cb);

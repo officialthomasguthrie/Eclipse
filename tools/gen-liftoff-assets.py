@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Boot splash assets (sun, moon, dot), stdlib only.
+"""Boot splash assets (the passphrase dot), stdlib only.
 
 Usage: gen-liftoff-assets.py [output-dir]   (default: nix/liftoff/plymouth)
 
-The sun is a light gray disc, the moon a black one a little smaller, so what is left is a black
-disc with a thin ring. The dot is one bullet of the passphrase field. The script scales
-all three to the screen, so the pngs are drawn large.
+The dot is one bullet of the graphical style's passphrase field, a light gray disc. The script scales
+it to the screen, so the png is drawn large. The mark the style shows is nix/liftoff/logo/rift-mark.png.
 """
 
 import math
@@ -14,10 +13,7 @@ import struct
 import sys
 import zlib
 
-SIZE = 512
-RING = 0.03  # ring width as a fraction of the sun's diameter
-GRAY = (204, 204, 204)  # #cccccc, the sun and the text
-BLACK = (0, 0, 0)  # the moon
+GRAY = (204, 204, 204)  # #cccccc, the dot and the text
 
 
 def write_png(path: pathlib.Path, width: int, height: int, pixel) -> None:
@@ -60,12 +56,9 @@ def disc(color, size: int, radius: float):
 def main() -> None:
     out = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "nix/liftoff/plymouth")
     out.mkdir(parents=True, exist_ok=True)
-    sun = SIZE / 2 - 1
-    write_png(out / "sun.png", SIZE, SIZE, disc(GRAY, SIZE, sun))
-    write_png(out / "moon.png", SIZE, SIZE, disc(BLACK, SIZE, sun - RING * SIZE))
-    write_png(out / "dot.png", 64, 64, disc(GRAY, 64, 31))
-    for name in ("sun.png", "moon.png", "dot.png"):
-        print(f"{out / name}: {(out / name).stat().st_size} bytes")
+    dot = out / "dot.png"
+    write_png(dot, 64, 64, disc(GRAY, 64, 31))
+    print(f"{dot}: {dot.stat().st_size} bytes")
 
 
 if __name__ == "__main__":

@@ -2545,7 +2545,9 @@ dependencies = [
 name = "liftoff-splash"
 version = "0.1.0"
 dependencies = [
- "librift",
+ "ab_glyph",
+ "libc",
+ "png",
 ]
 
 [[package]]

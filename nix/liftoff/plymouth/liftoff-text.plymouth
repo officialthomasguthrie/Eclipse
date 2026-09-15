@@ -1,0 +1,9 @@
+[Plymouth Theme]
+Name=Liftoff text
+Description=The logo in characters and the console's status lines while Rift starts.
+ModuleName=liftoff
+
+[liftoff]
+Title=@title@
+Font=/usr/share/plymouth/themes/liftoff-text/DejaVuSansMono.ttf
+BoldFont=/usr/share/plymouth/themes/liftoff-text/DejaVuSansMono-Bold.ttf

@@ -62,6 +62,12 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
+# liftoff-splash runs inside plymouthd. a panic in it unwinds to the function plymouth called, where
+# the plugin stops it, instead of taking plymouthd and the passphrase prompt down with it
+[profile.splash]
+inherits = "release"
+panic = "unwind"
+
 [profile.release.package.niri-config]
 # knuffel generates a lot of debuginfo
 debug = false

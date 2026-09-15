@@ -540,6 +540,12 @@ jobs:
         run: |
           python3 tools/boot-test.py vm/bin/rift-vm rift.raw.zst pass.txt --first-boot --exchange 1G \
             --log first-boot.log --splash first-boot-splash.png --timeout 900
+      - name: Boot with the graphical style
+        # the kernel command line picks the other theme, through a SMBIOS string systemd-stub reads. the
+        # splash check is the graphical one, and the drive powers off once the shell is up
+        run: |
+          python3 tools/boot-test.py vm/bin/rift-vm rift.raw.zst pass.txt --style graphical --splash-only \
+            --log graphical.log --splash graphical-splash.png --timeout 600
       - uses: actions/upload-artifact@v4
         if: always()
         continue-on-error: true
@@ -548,6 +554,7 @@ jobs:
           path: |
             serial.log
             first-boot.log
+            graphical.log
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
@@ -557,6 +564,7 @@ jobs:
           path: |
             splash.png
             first-boot-splash.png
+            graphical-splash.png
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         id: screendumps
@@ -572,7 +580,7 @@ jobs:
         # log, and `gh run view --log | base64 -d` gets the png back
         if: always() && steps.screendumps.outcome == 'failure'
         run: |
-          for f in splash.png first-boot-splash.png desktop*.png; do
+          for f in splash.png first-boot-splash.png graphical-splash.png desktop*.png; do
             [ -f "$f" ] || continue
             echo "::group::$f"
             base64 -w0 "$f"; echo

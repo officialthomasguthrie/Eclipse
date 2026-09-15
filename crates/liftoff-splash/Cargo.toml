@@ -1,6 +1,6 @@
 [package]
 name = "liftoff-splash"
-description = "Liftoff: the boot splash as a Rust DRM program"
+description = "Liftoff: the text boot, a plymouth splash plugin"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,12 +8,25 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-[[bin]]
-name = "liftoff-splash"
-path = "src/main.rs"
+# plymouthd loads the cdylib. the preview example and the tests use the rlib
+[lib]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-librift.workspace = true
+ab_glyph = "0.2.32"
 
-[lints]
-workspace = true
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.189"
+
+[dev-dependencies]
+png = "0.18.1"
+
+# the workspace's lints, except that plymouth calls the plugin from C: its one module that talks to
+# plymouth allows unsafe code, the rest of the crate denies it
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
