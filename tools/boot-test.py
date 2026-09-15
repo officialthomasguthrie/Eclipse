@@ -392,17 +392,41 @@ def check_desktop(width, height, rgb, corona=False, rows=0, error=False):
     return ok, lines
 
 
+# the logo in characters, with fastfetch's colour marks
+LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "nix", "totality", "logo", "eclipse-logo.txt")
+COLOUR_MARK = re.compile(r"\$[1-9]")
+# how many of the logo's warm pixels the greeting shows at least in ghostty, and a text console
+LOGO_WARM = 1500
+TTY_LOGO = 1500
+# a text console draws with the kernel's 8 by 16 font and palette: gray text, and xterm's warm
+# colours in brown, yellow and white
+TTY_GRAY = (170, 170, 170)
+TTY_CELL = (8, 16)
+
+
+def logo_lines():
+    """The logo's lines the way a terminal shows them, without the colour marks and trailing spaces."""
+    with open(LOGO, encoding="ascii") as f:
+        return [COLOUR_MARK.sub("", line).rstrip() for line in f.read().rstrip("\n").split("\n")]
+
+
+def warm(px):
+    """The logo's ambers and golds are warm, and nothing else on the desktop or a console is."""
+    return px[0] >= 90 and px[0] - px[2] >= 60
+
+
 def check_console(width, height, rgb):
     """Find the console in a screendump: corona's panel along the top, under it a run of rows that
-    are mostly the console's background, and the desktop under that. The terminal shows one line
-    of text, the prompt, and nothing a shell printed before it. Returns (ok, lines to print)."""
-    gray = black = 0
+    are mostly the console's background, and the desktop under that. The terminal shows fish's
+    greeting from its first line down: fastfetch, with the logo in its warm colours at the left.
+    Returns (ok, lines to print)."""
+    gray = black = logo = 0
     panel_rows = 0
     console_top, console_rows, console_width = -1, 0, 0
     text_rows = []
     for y in range(height):
         row = y * width * 3
-        row_panel = row_console = row_text = 0
+        row_panel = row_console = row_text = row_warm = 0
         for x in range(width):
             px = rgb[row + x * 3 : row + x * 3 + 3]
             if near(px, CONSOLE, 1):
@@ -412,6 +436,8 @@ def check_console(width, height, rgb):
             # close to it. lines start at the left edge, the pointer sits in the middle of the screen
             if x < width / 4 and not near(px, CONSOLE, 12):
                 row_text += 1
+            if warm(px):
+                row_warm += 1
             if near(px, DESKTOP, 3):
                 gray += 1
             elif near(px, MOON, 8):
@@ -427,14 +453,17 @@ def check_console(width, height, rgb):
                 console_top = y
             console_rows += 1
             console_width = max(console_width, row_console)
+            logo += row_warm
             if row_text:
                 text_rows.append(y)
     total = width * height
     scale = panel_rows / PANEL_HEIGHT if panel_rows else 1
     wanted = CONSOLE_HEIGHT * scale
     below = total - (panel_rows + console_rows) * width
-    # a line of DejaVu Sans Mono 11 is 17 rows, the prompt starts a few rows under the window's top
-    one_line = bool(text_rows) and text_rows[0] - console_top <= 12 * scale and text_rows[-1] - text_rows[0] < 24 * scale
+    # a line of DejaVu Sans Mono 11 is 17 rows. the greeting starts a few rows under the window's
+    # top, and the logo alone runs down most of the window
+    greeting = bool(text_rows) and text_rows[0] - console_top <= 12 * scale \
+        and text_rows[-1] - text_rows[0] >= min(len(logo_lines()) - 2, 18) * 17 * scale
     checks = [
         ("no console black", black <= 0.02 * total, f"{black} of {total}"),
         ("the panel is along the top", 0.9 * PANEL_HEIGHT <= panel_rows <= 3 * PANEL_HEIGHT, f"{panel_rows} rows"),
@@ -444,13 +473,52 @@ def check_console(width, height, rgb):
          f"{console_rows} rows, expected about {wanted:.0f}"),
         ("the console is as wide as the screen", console_width >= 0.9 * width, f"{console_width} of {width} in its widest row"),
         ("the desktop background covers the rest", gray >= 0.9 * below, f"{gray} of {below}"),
-        ("the terminal shows only its prompt", one_line,
+        ("the terminal shows the greeting", greeting,
          f"text in rows {text_rows[0]} to {text_rows[-1]}, the console starts at {console_top}" if text_rows else "no text"),
+        ("the logo is in its colours", logo >= LOGO_WARM * scale * scale, f"{logo} warm pixels, {LOGO_WARM} or more wanted"),
     ]
     lines = [f"console: {width}x{height}"]
     ok = True
     for name, passed, detail in checks:
         lines.append(f"console: {'ok  ' if passed else 'FAIL'} {name}: {detail}")
+        ok = ok and passed
+    return ok, lines
+
+
+def check_tty(width, height, rgb):
+    """Find /etc/issue on a text console: black behind it, the logo's colours in a block at the top
+    left as big as the logo, none outside it, and gray text under the block, which is the name line
+    and the login. Returns (ok, lines to print)."""
+    rows = logo_lines()
+    cell_w, cell_h = TTY_CELL
+    block_w, block_h = (max(len(line) for line in rows) + 1) * cell_w, (len(rows) + 1) * cell_h
+    black = inside = outside = text = 0
+    for y in range(height):
+        row = y * width * 3
+        for x in range(width):
+            px = rgb[row + x * 3 : row + x * 3 + 3]
+            if near(px, MOON, 8):
+                black += 1
+                continue
+            coloured = warm(px) or near(px, (255, 255, 255), 24)
+            if x < block_w and y < block_h:
+                inside += coloured
+            elif coloured:
+                outside += 1
+            elif near(px, TTY_GRAY, 24) and y < block_h + 4 * cell_h:
+                text += 1
+    total = width * height
+    checks = [
+        ("black covers most of the screen", black >= 0.85 * total, f"{black} of {total}"),
+        ("the logo is at the top left in its colours", inside >= TTY_LOGO,
+         f"{inside} coloured pixels in {block_w}x{block_h}, {TTY_LOGO} or more wanted"),
+        ("nothing else is in those colours", outside <= 0.05 * inside, f"{outside} coloured pixels outside the logo"),
+        ("the name and the login are under the logo", text >= 150, f"{text} gray pixels"),
+    ]
+    lines = [f"tty: {width}x{height}"]
+    ok = True
+    for name, passed, detail in checks:
+        lines.append(f"tty: {'ok  ' if passed else 'FAIL'} {name}: {detail}")
         ok = ok and passed
     return ok, lines
 
@@ -712,7 +780,7 @@ def main():
 
     # 2. the system is ours
     child.send("eclipse --version\r")
-    expect([r"eclipse \d+\.\d+\.\d+"], "eclipse --version output")
+    expect([r"Eclipse OS \d+\.\d+\.\d+"], "eclipse --version output")
     version = child.after
     expect([PROMPT], "the prompt")
 
@@ -758,7 +826,8 @@ def main():
         return found.group(1)
 
     def started_by_systemd_boot(uki):
-        """Check that systemd-boot started this uki and return its product name and version."""
+        """Check that systemd-boot started this uki and titles every Eclipse entry Eclipse OS with its
+        version, and return the boot loader's product name and version."""
         _, output = run("sudo bootctl status --no-pager", "bootctl status")
         printed = without_console(output)
         print(f"\nboot-test: bootctl status printed:\n{printed}", flush=True)
@@ -768,6 +837,15 @@ def main():
         entry = re.search(r"Current Entry:\s*(\S+)", printed)
         if not entry or entry.group(1) != uki:
             fail(f"systemd-boot started {entry.group(1) if entry else 'no entry'}, expected {uki}")
+        # systemd-boot titles a uki from the PRETTY_NAME in it, and bootctl marks the default and
+        # the selected entry after the title
+        _, output = run("sudo bootctl list --no-pager", "bootctl list")
+        printed = without_console(output)
+        listed = re.findall(r"^\s*title:\s*(.*?)\s*\n\s*id:\s*eclipse_(\d+\.\d+\.\d+)[^\n]*$", printed, re.M)
+        titles = [(re.sub(r"(?:\s+\([a-z/ ]+\))+$", "", title), version) for title, version in listed]
+        if not titles or any(title != f"Eclipse OS {version}" for title, version in titles):
+            print(f"\nboot-test: bootctl list printed:\n{printed}", flush=True)
+            fail(f"systemd-boot's entries are titled {titles}, expected Eclipse OS and each one's version")
         return loader.group(1)
 
     def unit_state(unit):
@@ -946,6 +1024,59 @@ def main():
     maker = "the first boot" if args.first_boot else "eclipse-flash"
     ok(f"{maker} made persist luks2 with argon2id, every subvolume and the owner's home"
        + (f", and an exfat exchange partition of {args.exchange}" if args.exchange else ""))
+
+    # 2e. the system says Eclipse OS. os-release names it, keeps IMAGE_ID and IMAGE_VERSION the way
+    # sysupdate and the clone read them, and says NixOS only in ID_LIKE. hostnamectl and lsb-release
+    # say the same, eclipse --version --logo prints the logo over the name, /etc/issue puts the logo
+    # above a text console's login, and fastfetch shows the logo and the name
+    logo = logo_lines()
+    status, output = run("cat /etc/os-release", "/etc/os-release")
+    release = dict(re.findall(r'^([A-Z_]+)="?([^"\n]*)"?\s*$', without_console(output), re.M))
+    wanted = {"NAME": "Eclipse OS", "ID": "eclipse", "ID_LIKE": "nixos", "IMAGE_ID": "eclipse",
+              "IMAGE_VERSION": running, "VERSION_ID": running, "PRETTY_NAME": f"Eclipse OS {running}",
+              "LOGO": "eclipse-logo", "ANSI_COLOR": "38;5;214"}
+    wrong = {key: release.get(key) for key, value in wanted.items() if release.get(key) != value}
+    if status != 0 or wrong:
+        fail(f"/etc/os-release has {wrong}, expected {wanted}: {release}")
+    said_nixos = [key for key, value in release.items() if key != "ID_LIKE" and "nixos" in value.lower()]
+    if said_nixos:
+        fail(f"/etc/os-release says NixOS in {', '.join(said_nixos)}: {release}")
+    _, output = run("hostnamectl", "hostnamectl")
+    printed = without_console(output)
+    print(f"\nboot-test: hostnamectl printed:\n{printed}", flush=True)
+    for label, value in (("Operating System", f"Eclipse OS {running}"), ("OS Image", "eclipse"),
+                         ("OS Image Version", running)):
+        if not re.search(rf"^\s*{label}:\s*{re.escape(value)}\s*$", printed, re.M):
+            fail(f"hostnamectl does not say {label}: {value}")
+    _, output = run("grep '^DISTRIB_DESCRIPTION=' /etc/lsb-release", "lsb-release")
+    if f'DISTRIB_DESCRIPTION="Eclipse OS {running}"' not in without_console(output):
+        fail(f"/etc/lsb-release does not say Eclipse OS {running}: {without_console(output).strip()!r}")
+    ok(f"os-release, hostnamectl and lsb-release say Eclipse OS {running}, IMAGE_ID is {release['IMAGE_ID']} "
+       f"and IMAGE_VERSION {release['IMAGE_VERSION']}")
+
+    status, output = run("eclipse --version --logo | cat", "eclipse --version --logo")
+    printed = "\n".join(line.rstrip() for line in without_console(output).split("\n"))
+    if status != 0 or "\n".join(logo) + f"\n\nEclipse OS {running}" not in printed:
+        fail(f"eclipse --version --logo printed {printed!r}, expected the logo with Eclipse OS {running} under it")
+    _, output = run("cat /etc/issue", "/etc/issue")
+    issue = without_console(output)
+    # agetty's escapes out of the way: the colours, the resets and the doubled backslashes
+    shown = re.sub(r"\\e(?:\[[0-9;]*m|\{\w+\})", "", issue).replace("\\\\", "\\")
+    if logo[0].strip() not in shown or "\\S{PRETTY_NAME} \\r (\\l)" not in issue:
+        fail(f"/etc/issue has no logo and name line: {issue!r}")
+    started = time.monotonic()
+    status, output = run("fastfetch --pipe", "fastfetch")
+    took = time.monotonic() - started
+    printed = without_console(output)
+    print(f"\nboot-test: fastfetch --pipe printed in {took:.1f}s:\n{printed}", flush=True)
+    if status != 0 or not printed.startswith(logo[0]):
+        fail(f"fastfetch does not start with the logo's first line {logo[0]!r}")
+    if not re.search(rf"\bOS: Eclipse OS {re.escape(running)}\b", printed):
+        fail(f"fastfetch does not say OS: Eclipse OS {running}")
+    missing = [key for key in ("Host class", "AI tier", "Last snapshot") if f"{key}: " not in printed]
+    if missing:
+        fail(f"fastfetch shows no {', '.join(missing)}")
+    ok(f"eclipse --version --logo, /etc/issue and fastfetch in {took:.1f}s show the logo and Eclipse OS {running}")
 
     # 2d. a drive written with --first-boot. persist has one key slot, the system runs with the machine
     # id in @var, and vault-first-boot said what it made. the next boot asks systemd-cryptsetup's
@@ -1541,6 +1672,38 @@ def main():
                  journals=("lock", "umbra"))
             locked_hint("no", "after unlocking the lock from Mod+L")
             ok("Mod+L locked the session and the owner's password unlocked it")
+
+            # 5f. a text console. ctrl+alt+f2 moves to the second one, where logind starts a getty that
+            # shows /etc/issue: the logo in its colours, the name line, and a login that asks for a
+            # name, since only the serial console logs in by itself. ctrl+alt+f1 goes back to the
+            # desktop, which umbra draws again
+            press(["ctrl", "alt", "f2"], what="ctrl+alt+f2")
+            waited = time.monotonic() + 30
+            while (state := unit_state("getty@tty2")) != "active":
+                if time.monotonic() > waited:
+                    fail(f"no getty runs on tty2 after ctrl+alt+f2, getty@tty2 is {state}")
+                time.sleep(2)
+            waited = time.monotonic() + 20
+            while True:
+                try:
+                    width, height, rgb = screendump(args.qmp, work, "tty2")
+                except (OSError, RuntimeError) as e:
+                    fail(f"screendump: {e}")
+                good, lines = check_tty(width, height, rgb)
+                if good or time.monotonic() > waited:
+                    break
+                time.sleep(2)
+            write_png(f"{stem}-tty2{extension}", width, height, rgb)
+            print("\nboot-test: " + "\nboot-test: ".join(lines), flush=True)
+            if not good:
+                fail(f"/etc/issue is not on tty2, see {stem}-tty2{extension}")
+            # the line is wider than the serial console, and systemctl would page it
+            _, output = run("systemctl show --no-pager getty@tty2 -p ExecStart --value | cat", "the getty on tty2")
+            if "--autologin" in without_console(output):
+                fail("the getty on tty2 logs someone in by itself")
+            ok("tty2 shows the logo, the name and a login from /etc/issue, and logs no one in by itself")
+            press(["ctrl", "alt", "f1"], what="ctrl+alt+f1")
+            look("the desktop back from tty2", f"{stem}-tty2-back{extension}", 30, rows=0, journals=("umbra",))
 
             # 5d. a question for aura, from the terminal first, which prints the answer here, and
             # then typed into the field. the answer is as many rows as the model makes it, so the

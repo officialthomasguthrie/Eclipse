@@ -1,6 +1,6 @@
 //! Names, D-Bus addresses and paths shared by every Eclipse component, the OS commands Corona and
 //! the eclipse command run, the client side of the services on the system bus, the index for
-//! search by meaning, and how a drive is written.
+//! search by meaning, what the system calls itself, and how a drive is written.
 //!
 //! Apache-2.0 so other people can embed it. Keep it dependency free: only the `bus` feature,
 //! which the asking side of the bus turns on, brings in zbus, and only the `disk` feature serde and
@@ -12,6 +12,7 @@ pub mod bus;
 pub mod disk;
 pub mod os;
 pub mod penumbra;
+pub mod release;
 pub mod search;
 pub mod syzygy;
 pub mod vault;
@@ -111,6 +112,10 @@ pub mod paths {
     pub const PENUMBRA_STATE: &str = "/var/lib/eclipse/penumbra";
     /// Phase marker written by the image.
     pub const PHASE: &str = "/etc/eclipse/phase";
+    /// The logo in characters, without its colours, installed by the image.
+    pub const LOGO: &str = "/etc/eclipse/logo.txt";
+    /// The same logo with its colours as terminal escape sequences.
+    pub const LOGO_ANSI: &str = "/etc/eclipse/logo.ansi";
 }
 
 #[cfg(test)]

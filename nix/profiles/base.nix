@@ -30,9 +30,8 @@ in
   security.rtkit.enable = true;
   hardware.bluetooth.enable = true;
 
+  # its greeting is in identity.nix
   programs.fish.enable = true;
-  # a new shell opens at its prompt, without fish's greeting
-  programs.fish.interactiveShellInit = "set -g fish_greeting";
   documentation.man.enable = true; # aura indexes man pages offline
 
   # dev account until first boot setup replaces it with the real owner

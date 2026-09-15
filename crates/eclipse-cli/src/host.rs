@@ -1,5 +1,5 @@
-//! `eclipse host`: what Syzygy remembers about this machine, one row per setting. Changing a
-//! setting needs a method on Syzygy's side of the bus, which does not exist yet.
+//! `eclipse host`: what Syzygy remembers about this machine, one row per setting, or one value by
+//! itself. Changing a setting needs a method on Syzygy's side of the bus, which does not exist yet.
 
 use std::process::ExitCode;
 
@@ -7,26 +7,42 @@ use libeclipse::syzygy::{self, Host, Output};
 
 use crate::text;
 
-const USAGE: &str = "Usage: eclipse host";
+const USAGE: &str = "Usage: eclipse host [class | tier]";
+
+const HELP: &str = "Shows what Syzygy remembers about this machine. class prints the host class \
+(owned, trusted or borrowed) by itself, and tier the AI tier.";
 
 pub fn run(args: &[String]) -> ExitCode {
-    match args.first().map(String::as_str) {
-        None => {}
-        Some("--help" | "-h") => {
-            println!("{USAGE}\n\nShows what Syzygy remembers about this machine.");
+    let one = match args {
+        [] => None,
+        [arg] if arg == "--help" || arg == "-h" => {
+            println!("{USAGE}\n\n{HELP}");
             return ExitCode::SUCCESS;
         }
-        Some(other) => return text::unknown("host", other, USAGE),
-    }
+        [arg] if field(arg).is_some() => field(arg),
+        [arg, rest @ ..] => return text::unknown("host", rest.first().unwrap_or(arg), USAGE),
+    };
     match syzygy::host() {
         Ok(host) => {
-            print!("{}", text::table(&rows(&host)));
+            match one {
+                Some(value) => println!("{}", value(host)),
+                None => print!("{}", text::table(&rows(&host))),
+            }
             ExitCode::SUCCESS
         }
         Err(why) => {
             eprintln!("{why}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// The value `eclipse host <name>` prints by itself.
+fn field(name: &str) -> Option<fn(Host) -> String> {
+    match name {
+        "class" => Some(|host| host.class),
+        "tier" => Some(|host| host.ai_tier),
+        _ => None,
     }
 }
 
@@ -117,5 +133,13 @@ mod tests {
         );
         let headless = rows(&host(Vec::new()));
         assert!(headless.contains(&("Display", "none".to_string())));
+    }
+
+    #[test]
+    fn class_and_tier_print_one_value_each() {
+        let value = |name| field(name).map(|get| get(host(Vec::new())));
+        assert_eq!(value("class").as_deref(), Some("borrowed"));
+        assert_eq!(value("tier").as_deref(), Some("small"));
+        assert_eq!(value("fingerprint"), None);
     }
 }

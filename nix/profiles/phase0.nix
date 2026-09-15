@@ -1,6 +1,6 @@
 # phase 0 plus the first of phase 1: console, shell, splash, aura's backend if a model is there,
 # umbra on tty1 and corona's panel on it. the serial console keeps its autologin shell, the boot test talks to it.
-{ config, ... }:
+{ config, pkgs, ... }:
 {
   boot.kernelParams = [
     "console=ttyS0,115200"
@@ -8,7 +8,15 @@
     # plymouth drops to its text mode on every console as soon as it sees a serial one
     "plymouth.ignore-serial-consoles"
   ];
-  services.getty.autologinUser = "eclipse";
+  # the serial console logs the owner in by itself. the text consoles ask for a login, so a locked
+  # session stays locked when someone switches to one
+  systemd.services."serial-getty@ttyS0" = {
+    overrideStrategy = "asDropin";
+    serviceConfig.ExecStart = [
+      ""
+      "${pkgs.util-linux}/bin/agetty --login-program ${config.services.getty.loginProgram} --issue-file /etc/issue:/etc/issue.d:/run/issue:/run/issue.d --autologin eclipse %I --keep-baud $TERM"
+    ];
+  };
 
   # the luks prompt also on the serial console. systemd's console agent stays out of plymouth's way
   # by default (both its path and service units check for plymouth), so it runs on ttyS0 only

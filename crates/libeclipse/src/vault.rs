@@ -23,10 +23,93 @@ const BACKUPS_TIMEOUT: Duration = Duration::from_secs(600);
 #[cfg(feature = "bus")]
 const BACKUP_TIMEOUT: Duration = Duration::from_secs(24 * 3600);
 
+const HOUR: i64 = 3600;
+const DAY: i64 = 24 * HOUR;
+
 /// The first 8 digits of a backup's id, which is what people see and type.
 #[must_use]
 pub fn short(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
+}
+
+/// Seconds since 1970 as the name of a snapshot taken then: `2026-09-12T14:00:03Z`.
+#[must_use]
+pub fn snapshot_name(secs: i64) -> String {
+    let (year, month, day) = civil(secs.div_euclid(DAY));
+    let rest = secs.rem_euclid(DAY);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rest / HOUR,
+        rest % HOUR / 60,
+        rest % 60
+    )
+}
+
+/// The time a snapshot name stands for in seconds since 1970, or `None` when the name is not one.
+/// Only the exact form [`snapshot_name`] writes counts, so every time has one name.
+#[must_use]
+pub fn snapshot_time(name: &str) -> Option<i64> {
+    let bytes = name.as_bytes();
+    let shape = [
+        (4, b'-'),
+        (7, b'-'),
+        (10, b'T'),
+        (13, b':'),
+        (16, b':'),
+        (19, b'Z'),
+    ];
+    if bytes.len() != 20 || shape.iter().any(|&(at, c)| bytes[at] != c) {
+        return None;
+    }
+    let number = |from: usize, to: usize| {
+        name.get(from..to)?.bytes().try_fold(0, |n: i64, digit| {
+            if digit.is_ascii_digit() {
+                Some(n * 10 + i64::from(digit - b'0'))
+            } else {
+                None
+            }
+        })
+    };
+    let (year, month, day) = (number(0, 4)?, number(5, 7)?, number(8, 10)?);
+    let (hour, minute, second) = (number(11, 13)?, number(14, 16)?, number(17, 19)?);
+    let valid = (1..=12).contains(&month)
+        && (1..=days_in_month(year, month)).contains(&day)
+        && hour < 24
+        && minute < 60
+        && second < 60;
+    valid.then(|| days_from_civil(year, month, day) * DAY + hour * HOUR + minute * 60 + second)
+}
+
+/// Days since 1970-01-01 of a date, the era arithmetic from Howard Hinnant's notes.
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let yoe = year - era * 400;
+    let doy = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// The date of a day since 1970-01-01.
+fn civil(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + i64::from(month <= 2), month, day)
+}
+
+fn days_in_month(year: i64, month: i64) -> i64 {
+    match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
 }
 
 /// The error Vault refuses a restore with when the file at the path has changed.

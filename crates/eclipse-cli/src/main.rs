@@ -13,6 +13,7 @@ mod run;
 mod search;
 mod snapshot;
 mod text;
+mod version;
 
 use std::process::ExitCode;
 
@@ -71,10 +72,7 @@ fn main() -> ExitCode {
             usage();
             ExitCode::SUCCESS
         }
-        Some("--version" | "-V") => {
-            println!("eclipse {}", libeclipse::VERSION);
-            ExitCode::SUCCESS
-        }
+        Some("--version" | "-V") => version::run(rest),
         Some("host") => host::run(rest),
         Some("ai") => ai::run(rest),
         Some("doctor") => doctor::run(rest),
