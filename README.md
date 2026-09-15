@@ -1,5 +1,7 @@
 <div align="center">
 
+<img alt="Rift logo" src="nix/totality/logo/rift-mark.png" width="260">
+
 # Rift
 
 A portable operating system that runs from a USB drive, keeps its owner's data encrypted on that drive, and leaves the host computer's disks untouched.
