@@ -22,7 +22,6 @@ let
     }) (lib.stringToCharacters text) (if colours == "" then [ ] else lib.splitString " " colours)
   ) texts (read ./rift-logo.colours);
   eachLine = f: lib.concatMapStrings (line: f line + "\n") lines;
-  brightest = colour: lib.foldl' lib.max 0 (map lib.toInt (lib.splitString ";" colour));
 in
 {
   rows = builtins.length lines;
@@ -37,25 +36,5 @@ in
       cell: if cell.colour == null then cell.char else "${esc}[38;2;${cell.colour}m${cell.char}"
     ) line
     + "${esc}[0m"
-  );
-  # for agetty, which reads a backslash as the start of an escape: \e is the escape character. the
-  # kernel's console makes one of its sixteen colours of a true colour from the parts over half the
-  # brightest, so the faint blues of the haze would come out in its full blue. they are black there,
-  # as on the page the logo was drawn on
-  issue = eachLine (
-    line:
-    lib.concatMapStrings (
-      cell:
-      let
-        char = lib.replaceStrings [ "\\" ] [ "\\\\" ] cell.char;
-      in
-      if cell.colour == null then
-        char
-      else if brightest cell.colour < 70 then
-        "\\e[30m${char}"
-      else
-        "\\e[38;2;${cell.colour}m${char}"
-    ) line
-    + "\\e{reset}"
   );
 }

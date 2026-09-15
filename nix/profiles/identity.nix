@@ -60,10 +60,10 @@ in
     };
   };
 
-  # a text console shows the logo, then the name, the kernel and the console's name as Arch does,
-  # then the login
+  # a text console shows the name, the kernel and the console's name as Arch does, then the login.
+  # the logo is not there: a console can be narrower than the logo, which is never shown cut or
+  # shrunk. fish's greeting shows it after the login where it fits
   environment.etc.issue.text = ''
-    ${logo.issue}
     \S{PRETTY_NAME} \r (\l)
 
   '';

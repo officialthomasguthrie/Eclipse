@@ -394,12 +394,9 @@ def check_desktop(width, height, rgb, corona=False, rows=0, error=False):
 
 # the logo in characters
 LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "nix", "totality", "logo", "rift-logo.txt")
-# how many of the logo's pixels a text console shows at least. it draws with the kernel's 8 by 16
-# font and palette: gray text, and the logo's ice in cyan, bright cyan, blue and white
-TTY_LOGO = 1500
+# a text console draws with the kernel's 8 by 16 font and palette: gray text on black
 TTY_GRAY = (170, 170, 170)
 TTY_CELL = (8, 16)
-TTY_ICE = ((0, 170, 170), (85, 255, 255), (0, 0, 170), (255, 255, 255))
 
 
 def logo_lines():
@@ -489,34 +486,27 @@ def check_console(width, height, rgb):
 
 
 def check_tty(width, height, rgb):
-    """Find /etc/issue on a text console: black behind it, the logo's colours in a block at the top
-    left as big as the logo, none outside it, and gray text under the block, which is the name line
-    and the login. Returns (ok, lines to print)."""
-    rows = logo_lines()
+    """Find /etc/issue on a text console: black over the screen, gray text at the top left, which is
+    the name line and the login, and nothing in colour, since the logo is not in /etc/issue.
+    Returns (ok, lines to print)."""
     cell_w, cell_h = TTY_CELL
-    block_w, block_h = (max(len(line) for line in rows) + 1) * cell_w, (len(rows) + 1) * cell_h
-    black = inside = outside = text = 0
+    black = coloured = text = 0
     for y in range(height):
         row = y * width * 3
         for x in range(width):
             px = rgb[row + x * 3 : row + x * 3 + 3]
             if near(px, MOON, 8):
                 black += 1
-                continue
-            coloured = any(near(px, colour, 24) for colour in TTY_ICE)
-            if x < block_w and y < block_h:
-                inside += coloured
-            elif coloured:
-                outside += 1
-            elif near(px, TTY_GRAY, 24) and y < block_h + 4 * cell_h:
-                text += 1
+            elif near(px, TTY_GRAY, 24):
+                if x < 40 * cell_w and y < 8 * cell_h:
+                    text += 1
+            else:
+                coloured += 1
     total = width * height
     checks = [
-        ("black covers most of the screen", black >= 0.85 * total, f"{black} of {total}"),
-        ("the logo is at the top left in its colours", inside >= TTY_LOGO,
-         f"{inside} coloured pixels in {block_w}x{block_h}, {TTY_LOGO} or more wanted"),
-        ("nothing else is in those colours", outside <= 0.05 * inside, f"{outside} coloured pixels outside the logo"),
-        ("the name and the login are under the logo", text >= 150, f"{text} gray pixels"),
+        ("black covers most of the screen", black >= 0.95 * total, f"{black} of {total}"),
+        ("the name and the login are at the top left", text >= 150, f"{text} gray pixels"),
+        ("nothing is in colour, the logo is not there", coloured <= 0.001 * total, f"{coloured} coloured pixels"),
     ]
     lines = [f"tty: {width}x{height}"]
     ok = True
@@ -1030,8 +1020,8 @@ def main():
 
     # 2e. the system says Rift. os-release names it, keeps IMAGE_ID and IMAGE_VERSION the way
     # sysupdate and the clone read them, and says NixOS only in ID_LIKE. hostnamectl and lsb-release
-    # say the same, rift --version --logo prints the logo over the name, /etc/issue puts the logo
-    # above a text console's login, and fastfetch shows the logo and the name
+    # say the same, rift --version --logo prints the logo over the name, /etc/issue has the name
+    # line without the logo, and fastfetch shows the logo and the name
     logo = logo_lines()
     status, output = run("cat /etc/os-release", "/etc/os-release")
     release = dict(re.findall(r'^([A-Z_]+)="?([^"\n]*)"?\s*$', without_console(output), re.M))
@@ -1063,10 +1053,9 @@ def main():
         fail(f"rift --version --logo printed {printed!r}, expected the logo with Rift {running} under it")
     _, output = run("cat /etc/issue", "/etc/issue")
     issue = without_console(output)
-    # agetty's escapes out of the way: the colours, the resets and the doubled backslashes
-    shown = re.sub(r"\\e(?:\[[0-9;]*m|\{\w+\})", "", issue).replace("\\\\", "\\")
-    if logo[0].strip() not in shown or "\\S{PRETTY_NAME} \\r (\\l)" not in issue:
-        fail(f"/etc/issue has no logo and name line: {issue!r}")
+    # the logo is 110 columns and a text console can be 80, so /etc/issue has the name line and no logo
+    if "\\S{PRETTY_NAME} \\r (\\l)" not in issue or logo[0].strip() in issue or "\\e[" in issue:
+        fail(f"/etc/issue should have the name line and no logo: {issue!r}")
     started = time.monotonic()
     status, output = run("fastfetch --pipe", "fastfetch")
     took = time.monotonic() - started
@@ -1080,7 +1069,7 @@ def main():
     missing = [key for key in ("Host class", "AI tier", "Last snapshot") if f"{key}: " not in printed]
     if missing:
         fail(f"fastfetch shows no {', '.join(missing)}")
-    ok(f"rift --version --logo, /etc/issue and fastfetch in {took:.1f}s show the logo and Rift {running}")
+    ok(f"rift --version --logo and fastfetch in {took:.1f}s show the logo and Rift {running}, /etc/issue the name alone")
 
     # 2d. a drive written with --first-boot. persist has one key slot, the system runs with the machine
     # id in @var, and vault-first-boot said what it made. the next boot asks systemd-cryptsetup's
@@ -1678,9 +1667,9 @@ def main():
             ok("Mod+L locked the session and the owner's password unlocked it")
 
             # 5f. a text console. ctrl+alt+f2 moves to the second one, where logind starts a getty that
-            # shows /etc/issue: the logo in its colours, the name line, and a login that asks for a
-            # name, since only the serial console logs in by itself. ctrl+alt+f1 goes back to the
-            # desktop, which umbra draws again
+            # shows /etc/issue: the name line without the logo, and a login that asks for a name, since
+            # only the serial console logs in by itself. ctrl+alt+f1 goes back to the desktop, which
+            # umbra draws again
             press(["ctrl", "alt", "f2"], what="ctrl+alt+f2")
             waited = time.monotonic() + 30
             while (state := unit_state("getty@tty2")) != "active":
@@ -1705,7 +1694,7 @@ def main():
             _, output = run("systemctl show --no-pager getty@tty2 -p ExecStart --value | cat", "the getty on tty2")
             if "--autologin" in without_console(output):
                 fail("the getty on tty2 logs someone in by itself")
-            ok("tty2 shows the logo, the name and a login from /etc/issue, and logs no one in by itself")
+            ok("tty2 shows the name and a login from /etc/issue without the logo, and logs no one in by itself")
             press(["ctrl", "alt", "f1"], what="ctrl+alt+f1")
             look("the desktop back from tty2", f"{stem}-tty2-back{extension}", 30, rows=0, journals=("umbra",))
 
