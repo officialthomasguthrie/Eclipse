@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Date | YYYY-MM-DD |
-| Eclipse version | |
+| Rift version | |
 | Drive | Class (cheap stick, SSD-class stick, NVMe enclosure), model |
 | Firmware | UEFI version, Secure Boot state |
 | CPU | |

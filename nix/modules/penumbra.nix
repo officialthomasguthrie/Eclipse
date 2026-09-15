@@ -1,6 +1,6 @@
-# penumbra: sandboxing. bwrap for eclipse run --sandbox, which penumbra runs unprivileged in a user
+# penumbra: sandboxing. bwrap for rift run --sandbox, which penumbra runs unprivileged in a user
 # namespace, each sandbox in a scope of the user manager named for its app. penumbra serve answers on
-# the system bus as dev.eclipse.Penumbra and keeps the network switch for those apps in its own
+# the system bus as dev.rift.Penumbra and keeps the network switch for those apps in its own
 # nftables table. flatpak with its portals for gui apps has a switch of its own. no host disk is
 # visible to any sandbox.
 {
@@ -11,8 +11,8 @@
   ...
 }:
 let
-  cfg = config.eclipse.penumbra;
-  busName = "dev.eclipse.Penumbra";
+  cfg = config.rift.penumbra;
+  busName = "dev.rift.Penumbra";
   # anyone may list the switch, and a sandbox asks as it starts, from its own scope. only the owner,
   # who is in wheel, turns an app's network off or on. only root owns the name
   policy = pkgs.writeTextFile {
@@ -40,7 +40,7 @@ let
   };
 in
 {
-  options.eclipse.penumbra = {
+  options.rift.penumbra = {
     enable = lib.mkEnableOption "Penumbra, app sandboxing";
     flatpak.enable = lib.mkEnableOption "Flatpak with portals for graphical apps";
     package = lib.mkOption {
@@ -74,10 +74,10 @@ in
           serviceConfig = {
             Type = "dbus";
             BusName = busName;
-            ExecStart = "${cfg.package}/bin/penumbra serve --state /var/lib/eclipse/penumbra";
+            ExecStart = "${cfg.package}/bin/penumbra serve --state /var/lib/rift/penumbra";
             Restart = "on-failure";
             # the apps that are off. the table stays when the service stops, so they stay off
-            StateDirectory = "eclipse/penumbra";
+            StateDirectory = "rift/penumbra";
             # root with only the right to change the firewall. it reads the cgroup of the process
             # that asks, which anyone may
             CapabilityBoundingSet = [ "CAP_NET_ADMIN" ];

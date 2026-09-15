@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# makes any x86-64 linux box (mini pc, old desktop, vps) the eclipse builder. run it on that box:
+# makes any x86-64 linux box (mini pc, old desktop, vps) the rift builder. run it on that box:
 #
-#   curl -fsSL https://raw.githubusercontent.com/officialthomasguthrie/Eclipse/main/tools/builder-setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/officialthomasguthrie/Rift/main/tools/builder-setup.sh | bash
 #
 # installs nix, trusts your user for remote builds, makes sure sshd is up, prints what to run on the mac.| bash
 #   (or copy the file over and run: bash builder-setup.sh)

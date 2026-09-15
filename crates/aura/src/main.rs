@@ -1,6 +1,6 @@
 //! aurad: Aura's daemon. It picks a chat model from the manifest for the tier Syzygy reports,
 //! runs llama-server on a unix socket as its child, serves the local api on the loopback address in
-//! front of it, and answers questions on the system bus as `dev.eclipse.Aura`. When the manifest's
+//! front of it, and answers questions on the system bus as `dev.rift.Aura`. When the manifest's
 //! embedding model is on the drive, a second llama-server runs it for search by meaning.
 
 mod api;
@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 
 use backend::{Backend, Picked, Role, Status};
-use libeclipse::Component;
+use librift::Component;
 use models::{Manifest, Tier};
 
 /// The local api's port. Ollama's, so tools that look for a local model find this one.
@@ -193,8 +193,8 @@ fn signal(connection: &zbus::blocking::Connection) {
 /// `Ok(None)` means the program already did what was asked (help or version).
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Args>, String> {
     let mut parsed = Args {
-        manifest: PathBuf::from(libeclipse::paths::MODEL_MANIFEST),
-        models_dir: PathBuf::from(libeclipse::paths::MODELS),
+        manifest: PathBuf::from(librift::paths::MODEL_MANIFEST),
+        models_dir: PathBuf::from(librift::paths::MODELS),
         llama_server: PathBuf::from("llama-server"),
         port: PORT,
         socket: PathBuf::from(SOCKET),
@@ -223,7 +223,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Option<Args>, St
             }
             "--print" => parsed.print = true,
             "--version" | "-V" => {
-                println!("aurad {}", libeclipse::VERSION);
+                println!("aurad {}", librift::VERSION);
                 return Ok(None);
             }
             "--help" | "-h" => {
@@ -269,11 +269,11 @@ fn usage() {
     println!("Runs the chat model for this machine and answers on the system bus.\n");
     println!(
         "  --manifest <file>          the model manifest (default {})",
-        libeclipse::paths::MODEL_MANIFEST
+        librift::paths::MODEL_MANIFEST
     );
     println!(
         "  --models-dir <dir>         where the weights are (default {})",
-        libeclipse::paths::MODELS
+        librift::paths::MODELS
     );
     println!("  --llama-server <program>   the inference server (default llama-server)");
     println!("  --port <port>              the local api's port on 127.0.0.1 (default {PORT})");
@@ -298,11 +298,8 @@ mod tests {
     #[test]
     fn defaults() {
         let args = parse(&[]).unwrap().unwrap();
-        assert_eq!(
-            args.manifest,
-            PathBuf::from(libeclipse::paths::MODEL_MANIFEST)
-        );
-        assert_eq!(args.models_dir, PathBuf::from(libeclipse::paths::MODELS));
+        assert_eq!(args.manifest, PathBuf::from(librift::paths::MODEL_MANIFEST));
+        assert_eq!(args.models_dir, PathBuf::from(librift::paths::MODELS));
         assert_eq!(args.port, 11434);
         assert_eq!(args.socket, PathBuf::from("/run/aura/llama.sock"));
         assert_eq!(args.embedding_socket, PathBuf::from("/run/aura/embed.sock"));

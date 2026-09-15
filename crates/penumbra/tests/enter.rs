@@ -1,5 +1,5 @@
 //! `penumbra enter` on the computer the tests run on, checked from outside: what it can read and
-//! change, and the filters it runs under. The boot test does the same for `eclipse run --sandbox` in
+//! change, and the filters it runs under. The boot test does the same for `rift run --sandbox` in
 //! the image, where bwrap builds the rest of the sandbox.
 #![cfg(target_os = "linux")]
 

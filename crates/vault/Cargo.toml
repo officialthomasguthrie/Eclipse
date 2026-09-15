@@ -18,8 +18,8 @@ name = "vault-first-boot"
 path = "src/first_boot.rs"
 
 [dependencies]
-# the drive layout, the guard and the steps a clone writes with, shared with eclipse-flash
-libeclipse = { workspace = true, features = ["disk"] }
+# the drive layout, the guard and the steps a clone writes with, shared with rift-flash
+librift = { workspace = true, features = ["disk"] }
 # the system bus interface. blocking takes a snapshot or a restore off the bus's own threads
 zbus = { version = "5.18", default-features = false, features = ["async-io", "blocking-api"] }
 blocking = "1.6"

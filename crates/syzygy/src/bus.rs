@@ -1,10 +1,10 @@
-//! Syzygy on the system bus: `dev.eclipse.Syzygy` at `/dev/eclipse/Syzygy`.
+//! Syzygy on the system bus: `dev.rift.Syzygy` at `/dev/rift/Syzygy`.
 //!
 //! Read only for now. The profile is worked out once, before the name is taken, so anything that
 //! waits for the name has the answers the moment it arrives. Changing a setting from the bus
-//! comes with `eclipse host`.
+//! comes with `rift host`.
 
-use libeclipse::Component;
+use librift::Component;
 
 use crate::profile::Profile;
 
@@ -17,7 +17,7 @@ pub struct Syzygy {
     profile: Profile,
 }
 
-#[zbus::interface(name = "dev.eclipse.Syzygy")]
+#[zbus::interface(name = "dev.rift.Syzygy")]
 impl Syzygy {
     /// SHA-256 of the machine's DMI strings and PCI ids.
     #[zbus(property)]

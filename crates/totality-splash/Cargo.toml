@@ -13,7 +13,7 @@ name = "totality-splash"
 path = "src/main.rs"
 
 [dependencies]
-libeclipse.workspace = true
+librift.workspace = true
 
 [lints]
 workspace = true

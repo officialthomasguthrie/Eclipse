@@ -13,7 +13,7 @@ name = "syzygy"
 path = "src/main.rs"
 
 [dependencies]
-libeclipse.workspace = true
+librift.workspace = true
 # the system bus interface. default features bring the async-io executor and the blocking api
 zbus = { version = "5.18", default-features = false, features = ["async-io", "blocking-api"] }
 

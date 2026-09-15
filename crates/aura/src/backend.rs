@@ -277,7 +277,7 @@ mod tests {
     fn backend(role: Role, socket: &str, ctx_size: u32) -> Backend {
         Backend {
             program: PathBuf::from("llama-server"),
-            models_dir: PathBuf::from("/var/lib/eclipse/models"),
+            models_dir: PathBuf::from("/var/lib/rift/models"),
             socket: PathBuf::from(socket),
             ctx_size,
             role,
@@ -292,14 +292,14 @@ mod tests {
     #[test]
     fn the_server_listens_on_its_socket_and_fetches_nothing() {
         let args = backend(Role::Chat, "/run/aura/llama.sock", 8192).args(
-            Path::new("/var/lib/eclipse/models/Qwen3-0.6B-Q8_0.gguf"),
+            Path::new("/var/lib/rift/models/Qwen3-0.6B-Q8_0.gguf"),
             "qwen3-0.6b-q8_0",
         );
         assert_eq!(after(&args, "--host"), Some("/run/aura/llama.sock"));
         assert!(!args.iter().any(|arg| arg == "--port"));
         assert_eq!(
             after(&args, "--model"),
-            Some("/var/lib/eclipse/models/Qwen3-0.6B-Q8_0.gguf")
+            Some("/var/lib/rift/models/Qwen3-0.6B-Q8_0.gguf")
         );
         assert_eq!(after(&args, "--alias"), Some("qwen3-0.6b-q8_0"));
         assert_eq!(after(&args, "--ctx-size"), Some("8192"));
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn the_embedding_server_reads_a_whole_context_in_one_batch() {
         let args = backend(Role::Embedding, "/run/aura/embed.sock", 2048).args(
-            Path::new("/var/lib/eclipse/models/nomic-embed-text-v1.5.Q8_0.gguf"),
+            Path::new("/var/lib/rift/models/nomic-embed-text-v1.5.Q8_0.gguf"),
             "nomic-embed-text-v1.5-q8",
         );
         assert_eq!(after(&args, "--host"), Some("/run/aura/embed.sock"));

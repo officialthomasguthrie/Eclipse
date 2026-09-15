@@ -13,8 +13,8 @@ name = "penumbra"
 path = "src/main.rs"
 
 [dependencies]
-# a sandbox asks penumbra about its app's network through libeclipse, and penumbra serve answers
-libeclipse = { workspace = true, features = ["bus"] }
+# a sandbox asks penumbra about its app's network through librift, and penumbra serve answers
+librift = { workspace = true, features = ["bus"] }
 zbus = { version = "5.18", default-features = false, features = ["async-io", "blocking-api"] }
 # whether it was started as root, without unsafe code
 rustix = { version = "1.1", default-features = false, features = ["process", "std"] }

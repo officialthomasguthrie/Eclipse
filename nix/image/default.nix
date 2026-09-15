@@ -2,7 +2,7 @@
 #
 # the image is slot a of the a/b layout: the esp with systemd-boot and a uki that counts its boots,
 # the store's verity partition and the store. writing it to a drive adds slot b and persist behind it
-# (eclipse-flash). ab-sysupdate.nix is the running side
+# (rift-flash). ab-sysupdate.nix is the running side
 {
   config,
   lib,
@@ -25,8 +25,8 @@ in
   boot.loader.grub.enable = false;
   boot.initrd.systemd.enable = true;
 
-  # names the uki, the image file and the slot labels: eclipse_<version>, store_<version>
-  system.image.id = "eclipse";
+  # names the uki, the image file and the slot labels: rift_<version>, store_<version>
+  system.image.id = "rift";
   system.image.version = "0.1.0";
 
   # root is tmpfs. the store is the verity partition, everything personal is on persist
@@ -39,7 +39,7 @@ in
   };
 
   image.repart = {
-    name = "eclipse";
+    name = "rift";
     verityStore = {
       enable = true;
       # +3 is the boot counter: three tries before systemd-boot falls back to the other slot

@@ -14,7 +14,7 @@ use seccompiler::{
     SeccompFilter, SeccompRule, TargetArch,
 };
 
-/// The Landlock version penumbra needs all of, which Eclipse's kernel has: rights on files with
+/// The Landlock version penumbra needs all of, which Rift's kernel has: rights on files with
 /// truncate and device ioctls, and the scopes that keep abstract sockets and signals inside the
 /// sandbox.
 const LANDLOCK: ABI = ABI::V6;

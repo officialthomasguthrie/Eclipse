@@ -1,5 +1,5 @@
 # syzygy: host adaptation. runs before the session, works out what the machine is, writes its
-# profile under the hosts directory, then answers on the system bus as dev.eclipse.Syzygy.
+# profile under the hosts directory, then answers on the system bus as dev.rift.Syzygy.
 {
   config,
   lib,
@@ -8,8 +8,8 @@
   ...
 }:
 let
-  cfg = config.eclipse.syzygy;
-  busName = "dev.eclipse.Syzygy";
+  cfg = config.rift.syzygy;
+  busName = "dev.rift.Syzygy";
   # the interface is read only, so anyone on the machine may read it. only root owns the name.
   policy = pkgs.writeTextFile {
     name = "syzygy-dbus-policy";
@@ -32,7 +32,7 @@ let
   };
 in
 {
-  options.eclipse.syzygy = {
+  options.rift.syzygy = {
     enable = lib.mkEnableOption "Syzygy, host adaptation";
     package = lib.mkOption {
       type = lib.types.package;
@@ -41,7 +41,7 @@ in
     };
     hostsDir = lib.mkOption {
       type = lib.types.str;
-      default = "/var/lib/eclipse/hosts";
+      default = "/var/lib/rift/hosts";
       description = "Per-host profiles (the @hosts subvolume on persist).";
     };
   };

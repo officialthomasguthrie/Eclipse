@@ -1,7 +1,7 @@
 //! vault-first-boot: runs in the initrd of every boot, before persist is opened. A drive written on
-//! macOS or Windows, or with `eclipse-flash write --first-boot`, has no persist yet. On such a drive
+//! macOS or Windows, or with `rift-flash write --first-boot`, has no persist yet. On such a drive
 //! this asks for a passphrase on the drive's own screen, makes persist in the free space after the
-//! last partition the way eclipse-flash and a clone make it, and leaves it open for the boot to go on
+//! last partition the way rift-flash and a clone make it, and leaves it open for the boot to go on
 //! with, so the passphrase is asked for once. It formats an exchange partition that has no file
 //! system too. On a drive that has both it changes nothing.
 
@@ -11,8 +11,8 @@ use std::process::{Command, ExitCode, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use libeclipse::disk::run::{Persist, feed, settle, tool};
-use libeclipse::disk::{
+use librift::disk::run::{Persist, feed, settle, tool};
+use librift::disk::{
     ALIGN, LEAST_PERSIST, LINUX_TYPE, Table, passphrase_problem, read_table, size,
 };
 
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn persist_gets_the_space_sfdisk_gives_it() {
-        // what eclipse-flash writes onto 24G on macOS and Windows, with an exchange partition. sfdisk
+        // what rift-flash writes onto 24G on macOS and Windows, with an exchange partition. sfdisk
         // gave persist 8386527 sectors after these on the Linux writer's drive
         let table = read_table(
             r#"{"partitiontable": {"label": "gpt", "sectorsize": 512, "partitions": [
@@ -312,20 +312,13 @@ mod tests {
 
     #[test]
     fn a_passphrase_is_asked_for_again_until_it_will_do() {
-        let mut answers = [
-            "short",
-            "eclipse-test",
-            "eclipse-tset",
-            "eclipse-test",
-            "eclipse-test",
-        ]
-        .into_iter();
+        let mut answers = ["short", "rift-test", "rift-tset", "rift-test", "rift-test"].into_iter();
         let mut asked = Vec::new();
         let chosen = choose(&mut |question: &str| {
             asked.push(question.to_string());
             Ok(answers.next().unwrap().to_string())
         });
-        assert_eq!(chosen, Ok("eclipse-test".to_string()));
+        assert_eq!(chosen, Ok("rift-test".to_string()));
         assert_eq!(
             asked,
             [

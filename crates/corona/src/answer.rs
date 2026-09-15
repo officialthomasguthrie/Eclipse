@@ -1,5 +1,5 @@
-//! Aura's answer in the list under the field. Asking and reading the reply is libeclipse's
-//! `aura` module, which the eclipse command shares; how the words fit the list is the panel's.
+//! Aura's answer in the list under the field. Asking and reading the reply is librift's
+//! `aura` module, which the rift command shares; how the words fit the list is the panel's.
 
 // the rows are only drawn by the panel, and the panel is linux only
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn a_long_line_wraps_at_spaces() {
-        let answer = "Eclipse OS runs from a USB drive and keeps everything personal on an \
+        let answer = "Rift runs from a USB drive and keeps everything personal on an \
                       encrypted partition, so the computer it runs on is left as it was.";
         let wrapped = rows(answer, 8);
         assert!(wrapped.len() > 1);

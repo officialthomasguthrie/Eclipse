@@ -13,7 +13,7 @@ name = "aurad"
 path = "src/main.rs"
 
 [dependencies]
-libeclipse.workspace = true
+librift.workspace = true
 # the model list comes out of the manifest, the answers out of llama-server's json
 serde.workspace = true
 serde_json.workspace = true

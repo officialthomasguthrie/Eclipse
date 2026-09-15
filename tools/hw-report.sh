@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hardware report. run as root on a booted eclipse or any linux. writes hw/<vendor>-<model>.md, or stdout with -
+# hardware report. run as root on a booted rift or any linux. writes hw/<vendor>-<model>.md, or stdout with -
 set -euo pipefail
 
 vendor=$(dmidecode -s system-manufacturer 2>/dev/null | tr -cd '[:alnum:] ' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
@@ -13,7 +13,7 @@ out="${1:-$(dirname "$0")/../hw/$slug.md}"
   echo "| | |"
   echo "|---|---|"
   echo "| Date | $(date +%F) |"
-  echo "| Eclipse version | $(cat /etc/os-release 2>/dev/null | sed -n 's/^IMAGE_VERSION=//p') |"
+  echo "| Rift version | $(cat /etc/os-release 2>/dev/null | sed -n 's/^IMAGE_VERSION=//p') |"
   echo "| Firmware | $(dmidecode -s bios-version 2>/dev/null), secure boot: $(mokutil --sb-state 2>/dev/null | head -1 || echo unknown) |"
   echo "| CPU | $(lscpu | sed -n 's/^Model name: *//p') |"
   echo "| RAM | $(free -h | awk '/Mem:/ {print $2}') |"

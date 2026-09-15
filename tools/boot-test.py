@@ -2,11 +2,11 @@
 """Boots an image through the flake's vm app and checks that the system comes up. The boot job in ci
 runs this.
 
-Usage: boot-test.py <eclipse-vm> <image> <passfile> [--models dir] [--exchange size] [--timeout 600]
+Usage: boot-test.py <rift-vm> <image> <passfile> [--models dir] [--exchange size] [--timeout 600]
        [--log serial.log] [--splash splash.png] [--desktop desktop.png] [--corona] [--updates updates.img]
        [--backup backup.img] [--clone clone.img] [--first-boot]
 
-With --first-boot eclipse-flash writes the drive without persist, the way it writes one on macOS and
+With --first-boot rift-flash writes the drive without persist, the way it writes one on macOS and
 Windows, and the drive makes persist when it first starts. The test answers its questions over serial: a
 passphrase that is too short and two that differ are asked for again, then the passphrase from the
 passfile goes in twice. The drive goes on to the shell without asking again, and gets the checks below
@@ -15,15 +15,15 @@ partition. Persist has one key slot and the system runs with the machine id in @
 drive asks systemd-cryptsetup's question, not the first boot's, and opens the same persist with the same
 passphrase: the same uuids, machine id, key slots and partitions. The test ends there.
 
-<eclipse-vm> is the program from `nix build .#vm` (result/bin/eclipse-vm). It writes the image, .raw or
-.raw.zst, onto a drive in a file with eclipse-flash (through sudo), with the passphrase from the passfile
+<rift-vm> is the program from `nix build .#vm` (result/bin/rift-vm). It writes the image, .raw or
+.raw.zst, onto a drive in a file with rift-flash (through sudo), with the passphrase from the passfile
 for persist, then boots the drive as an nvme drive. Everything goes through the serial console: the luks prompt,
 the autologin shell, a few commands, the default apps on the path, the a/b slots, the host profile
-syzygy wrote and what `eclipse host` and `eclipse doctor` print. The serial output is printed as it
+syzygy wrote and what `rift host` and `rift doctor` print. The serial output is printed as it
 arrives and kept in the log file.
 
-Timeline: the test takes a snapshot of home with `eclipse snapshot take`, changes one file and
-deletes another, finds the snapshot through `eclipse snapshot` and on the bus, and restores both from
+Timeline: the test takes a snapshot of home with `rift snapshot take`, changes one file and
+deletes another, finds the snapshot through `rift snapshot` and on the bus, and restores both from
 it. The deleted file comes back as the owner's; the changed one stays as it is without --replace and
 is the copy from the snapshot with it. The hourly timer's service runs once and adds a snapshot. Then
 `vault prune` with one hour, one day and two weeks drops the snapshots named by hand for January that
@@ -31,13 +31,13 @@ fall past those limits and keeps the one that does not.
 
 Backup: with --backup the vm gets another drive, an empty ext4 file system labelled backup. The test
 mounts it, chooses a folder on it with `sudo vault target`, which prints the password, and unmounts it
-again. `eclipse backup now` backs up home; vault mounts the disk by its uuid by itself. One file is
-changed and another deleted, and both come back from the backup through `eclipse backup restore` the
+again. `rift backup now` backs up home; vault mounts the disk by its uuid by itself. One file is
+changed and another deleted, and both come back from the backup through `rift backup restore` the
 way they do from a snapshot. Then the test mounts the disk again: rustic refuses the repository with a
 wrong password and opens it with the printed one, and grep finds the file's text in none of its files.
 
 Clone: with --clone the vm gets an empty scsi disk that says it is removable. Last of all the test
-writes a file to home and runs `sudo eclipse clone`. Vault refuses the drive the system runs from, the
+writes a file to home and runs `sudo rift clone`. Vault refuses the drive the system runs from, the
 backup drive, which is not removable, and a serial that is not the disk's, and writes nothing. Then it
 clones onto the removable disk with a passphrase of its own. Slot a of the clone holds the running
 version under the running slot's uuids and its store matches the usrhash, slot b is empty, the first
@@ -47,7 +47,7 @@ only the clone. Its luks prompt refuses the first drive's passphrase and takes t
 in home, and the clone boots the version it was made from, from its own esp and slot a, with a machine
 id of its own and none of the first drive's snapshots.
 
-The drive: the vm app writes it from the image into a sparse file with eclipse-flash, with an exchange
+The drive: the vm app writes it from the image into a sparse file with rift-flash, with an exchange
 partition when --exchange gives its size. Persist has to be luks2 with argon2id, the settings a person
 gets, with every subvolume and the owner's home, and the exchange partition an exfat labelled EXCHANGE
 of that size. A clone of the drive gets an exchange partition of the same size.
@@ -72,7 +72,7 @@ slot b again, and sysupdate still lists broken as installed.
 With --models the files in that directory go into the @models subvolume before boot. The test waits
 on the system bus until aurad has loaded the model it picked for syzygy's tier, checks that it is the
 one in the directory, asks the local api for a short completion and asks aura a question over the bus
-and through `eclipse ai`.
+and through `rift ai`.
 The local api has to refuse the same completion when the request comes with a web page's Origin or
 Host header, and the owner must not reach llama-server's socket behind it.
 
@@ -113,7 +113,7 @@ import zlib
 import pexpect
 
 # the fish prompt is user@host with colour codes in between
-PROMPT = r"eclipse(\x1b\[[0-9;]*m)*@(\x1b\[[0-9;]*m)*eclipse"
+PROMPT = r"rift(\x1b\[[0-9;]*m)*@(\x1b\[[0-9;]*m)*rift"
 PASSPHRASE = r"(?i)passphrase[^\r\n]*:"
 # what vault-first-boot asks on a drive written without persist
 CHOOSE = r"Choose a passphrase"
@@ -241,16 +241,16 @@ ERROR_HEIGHT = 22
 BOTTOM_PAD = 4
 LIST_ROWS = 8
 # what the field and the list ask corona to type, and how many rows the pipeline prints
-RESULT_LINE = "echo [eclipse eclipse eclipse]"
+RESULT_LINE = "echo [rift rift rift]"
 RESULT_ROWS = 3
 ERROR_LINE = "wifi dance"
 # a question with a short answer. the model runs on the cpu, next to umbra's software renderer
 QUESTION = "What is the capital of France?"
 # the console, from nix/modules/umbra.nix: ghostty's background, the height the window rule gives
 # the window in logical pixels, and the app id the bind shows and hides
-CONSOLE = (40, 40, 40)
+CONSOLE = (4, 4, 6)
 CONSOLE_HEIGHT = 400
-CONSOLE_APP_ID = "dev.eclipse.Console"
+CONSOLE_APP_ID = "dev.rift.Console"
 # the lock screen, from crates/umbra-lock/src/draw.rs: its gray, the inside of the field, the ring
 # around it, the sentence for a refused password, and the field's size in logical pixels
 LOCK = (30, 30, 30)
@@ -260,7 +260,7 @@ REFUSED = (224, 109, 109)
 LOCK_FIELD_SIZE = (280, 32)
 LOCK_RING = 2
 # the owner's password from nix/profiles/base.nix, and one that is not it
-PASSWORD = "eclipse"
+PASSWORD = "rift"
 WRONG_PASSWORD = "wrongpassword"
 # the passphrase the test gives the clone's persist, not the first drive's
 CLONE_PASSPHRASE = "clone-test-5213"
@@ -271,7 +271,7 @@ USR_TYPE = "8484680c-9521-48c6-9c11-b0720656f69e"
 USR_VERITY_TYPE = "77ff5f63-e7b6-4633-acf4-1565b864c0e6"
 # where the transfers in nix/image/ab-sysupdate.nix read a new version from, and the tries they give
 # its uki
-UPDATES = "/var/lib/eclipse/updates"
+UPDATES = "/var/lib/rift/updates"
 TRIES = 3
 # where the test mounts the updates drive, and the unit that keeps the broken version from being good
 UPDATES_DRIVE = "/run/updates-drive"
@@ -392,78 +392,80 @@ def check_desktop(width, height, rgb, corona=False, rows=0, error=False):
     return ok, lines
 
 
-# the logo in characters, with fastfetch's colour marks
-LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "nix", "totality", "logo", "eclipse-logo.txt")
-COLOUR_MARK = re.compile(r"\$[1-9]")
-# how many of the logo's warm pixels the greeting shows at least in ghostty, and a text console
-LOGO_WARM = 1500
+# the logo in characters
+LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "nix", "totality", "logo", "rift-logo.txt")
+# how many of the logo's pixels a text console shows at least. it draws with the kernel's 8 by 16
+# font and palette: gray text, and the logo's ice in cyan, bright cyan, blue and white
 TTY_LOGO = 1500
-# a text console draws with the kernel's 8 by 16 font and palette: gray text, and xterm's warm
-# colours in brown, yellow and white
 TTY_GRAY = (170, 170, 170)
 TTY_CELL = (8, 16)
+TTY_ICE = ((0, 170, 170), (85, 255, 255), (0, 0, 170), (255, 255, 255))
 
 
 def logo_lines():
-    """The logo's lines the way a terminal shows them, without the colour marks and trailing spaces."""
+    """The logo's lines the way a terminal shows them, without trailing spaces."""
     with open(LOGO, encoding="ascii") as f:
-        return [COLOUR_MARK.sub("", line).rstrip() for line in f.read().rstrip("\n").split("\n")]
+        return [line.rstrip() for line in f.read().rstrip("\n").split("\n")]
 
 
-def warm(px):
-    """The logo's ambers and golds are warm, and nothing else on the desktop or a console is."""
-    return px[0] >= 90 and px[0] - px[2] >= 60
+def ice(px):
+    """The logo's blues, far more blue than red. The terminal's text and the grays are neither."""
+    return px[2] >= 90 and px[2] - px[0] >= 40
 
 
 def check_console(width, height, rgb):
     """Find the console in a screendump: corona's panel along the top, under it a run of rows that
     are mostly the console's background, and the desktop under that. The terminal shows fish's
-    greeting from its first line down: fastfetch, with the logo in its warm colours at the left.
-    Returns (ok, lines to print)."""
+    greeting from its first line down: fastfetch's rows alone, as the console is too short for the
+    whole logo beside them. Returns (ok, lines to print)."""
     gray = black = logo = 0
     panel_rows = 0
     console_top, console_rows, console_width = -1, 0, 0
     text_rows = []
     for y in range(height):
         row = y * width * 3
-        row_panel = row_console = row_text = row_warm = 0
+        row_panel = row_console = row_text = row_ice = row_black = 0
         for x in range(width):
             px = rgb[row + x * 3 : row + x * 3 + 3]
             if near(px, CONSOLE, 1):
                 row_console += 1
                 continue
-            # what is not close to the console's gray is text. the desktop and the panel grays are
-            # close to it. lines start at the left edge, the pointer sits in the middle of the screen
+            # what is not close to the console's background is text. lines start at the left edge,
+            # the pointer sits in the middle of the screen
             if x < width / 4 and not near(px, CONSOLE, 12):
                 row_text += 1
-            if warm(px):
-                row_warm += 1
+            # the focus ring runs along the window's edges
+            if 8 <= x < width - 8 and ice(px):
+                row_ice += 1
             if near(px, DESKTOP, 3):
                 gray += 1
             elif near(px, MOON, 8):
-                black += 1
+                row_black += 1
             elif near(px, PANEL, 3) or near(px, FIELD, 3):
                 row_panel += 1
         if row_panel > width / 2 and panel_rows == y:
             panel_rows += 1
-        # the first run of rows that are mostly the console's gray. a line of text in the terminal
-        # covers only some of a row
+        # the first run of rows that are mostly the console's background. a line of text in the
+        # terminal covers only some of a row. the edges of text on its near black are near black
+        # too, so black counts only outside the console
         if row_console > width / 2 and (console_top < 0 or console_top + console_rows == y):
             if console_top < 0:
                 console_top = y
             console_rows += 1
             console_width = max(console_width, row_console)
-            logo += row_warm
+            logo += row_ice
             if row_text:
                 text_rows.append(y)
+        else:
+            black += row_black
     total = width * height
     scale = panel_rows / PANEL_HEIGHT if panel_rows else 1
     wanted = CONSOLE_HEIGHT * scale
     below = total - (panel_rows + console_rows) * width
     # a line of DejaVu Sans Mono 11 is 17 rows. the greeting starts a few rows under the window's
-    # top, and the logo alone runs down most of the window
+    # top, and fastfetch's rows run down most of the window
     greeting = bool(text_rows) and text_rows[0] - console_top <= 12 * scale \
-        and text_rows[-1] - text_rows[0] >= min(len(logo_lines()) - 2, 18) * 17 * scale
+        and text_rows[-1] - text_rows[0] >= 18 * 17 * scale
     checks = [
         ("no console black", black <= 0.02 * total, f"{black} of {total}"),
         ("the panel is along the top", 0.9 * PANEL_HEIGHT <= panel_rows <= 3 * PANEL_HEIGHT, f"{panel_rows} rows"),
@@ -475,7 +477,8 @@ def check_console(width, height, rgb):
         ("the desktop background covers the rest", gray >= 0.9 * below, f"{gray} of {below}"),
         ("the terminal shows the greeting", greeting,
          f"text in rows {text_rows[0]} to {text_rows[-1]}, the console starts at {console_top}" if text_rows else "no text"),
-        ("the logo is in its colours", logo >= LOGO_WARM * scale * scale, f"{logo} warm pixels, {LOGO_WARM} or more wanted"),
+        ("the greeting has no logo, the console is too short for it", logo <= 100 * scale * scale,
+         f"{logo} pixels in the logo's blues"),
     ]
     lines = [f"console: {width}x{height}"]
     ok = True
@@ -500,7 +503,7 @@ def check_tty(width, height, rgb):
             if near(px, MOON, 8):
                 black += 1
                 continue
-            coloured = warm(px) or near(px, (255, 255, 255), 24)
+            coloured = any(near(px, colour, 24) for colour in TTY_ICE)
             if x < block_w and y < block_h:
                 inside += coloured
             elif coloured:
@@ -608,8 +611,8 @@ class Tee:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("vm", help="the eclipse-vm program from nix build .#vm")
-    ap.add_argument("image", help="the image, .raw or .raw.zst, that eclipse-flash writes onto the drive the vm boots")
+    ap.add_argument("vm", help="the rift-vm program from nix build .#vm")
+    ap.add_argument("image", help="the image, .raw or .raw.zst, that rift-flash writes onto the drive the vm boots")
     ap.add_argument("passfile")
     ap.add_argument("--models", help="directory with gguf files for the models subvolume, enables the aura check")
     ap.add_argument("--exchange", help="give the drive an exchange partition of this size, like 1G, and check it")
@@ -636,13 +639,13 @@ def main():
     with open(args.passfile, encoding="utf-8") as f:
         passphrase = f.read()
 
-    work = tempfile.mkdtemp(prefix="eclipse-boot-")
+    work = tempfile.mkdtemp(prefix="rift-boot-")
     if (args.splash or args.desktop or args.updates or args.first_boot) and not args.qmp:
         args.qmp = os.path.join(work, "qmp.sock")
 
     # the app picks kvm or tcg and the firmware. what follows its options replaces its defaults.
     # the gpu is virtio: the firmware draws the splash on it and umbra opens it as a drm device.
-    # with --first-boot eclipse-flash leaves persist out and the drive asks for the passphrase
+    # with --first-boot rift-flash leaves persist out and the drive asks for the passphrase
     drive = ["--first-boot"] if args.first_boot else ["--persist", os.path.abspath(args.passfile)]
     if args.models:
         drive += ["--models", os.path.abspath(args.models)]
@@ -779,12 +782,12 @@ def main():
         unlock()
 
     # 2. the system is ours
-    child.send("eclipse --version\r")
-    expect([r"Eclipse OS \d+\.\d+\.\d+"], "eclipse --version output")
+    child.send("rift --version\r")
+    expect([r"Rift \d+\.\d+\.\d+"], "rift --version output")
     version = child.after
     expect([PROMPT], "the prompt")
 
-    child.send("echo phase=(cat /etc/eclipse/phase)\r")
+    child.send("echo phase=(cat /etc/rift/phase)\r")
     expect([r"phase=(\d+)\s"], "the phase")
     phase = child.match.group(1)
     expect([PROMPT], "the prompt")
@@ -826,7 +829,7 @@ def main():
         return found.group(1)
 
     def started_by_systemd_boot(uki):
-        """Check that systemd-boot started this uki and titles every Eclipse entry Eclipse OS with its
+        """Check that systemd-boot started this uki and titles every Rift entry Rift with its
         version, and return the boot loader's product name and version."""
         _, output = run("sudo bootctl status --no-pager", "bootctl status")
         printed = without_console(output)
@@ -841,11 +844,11 @@ def main():
         # the selected entry after the title
         _, output = run("sudo bootctl list --no-pager", "bootctl list")
         printed = without_console(output)
-        listed = re.findall(r"^\s*title:\s*(.*?)\s*\n\s*id:\s*eclipse_(\d+\.\d+\.\d+)[^\n]*$", printed, re.M)
+        listed = re.findall(r"^\s*title:\s*(.*?)\s*\n\s*id:\s*rift_(\d+\.\d+\.\d+)[^\n]*$", printed, re.M)
         titles = [(re.sub(r"(?:\s+\([a-z/ ]+\))+$", "", title), version) for title, version in listed]
-        if not titles or any(title != f"Eclipse OS {version}" for title, version in titles):
+        if not titles or any(title != f"Rift {version}" for title, version in titles):
             print(f"\nboot-test: bootctl list printed:\n{printed}", flush=True)
-            fail(f"systemd-boot's entries are titled {titles}, expected Eclipse OS and each one's version")
+            fail(f"systemd-boot's entries are titled {titles}, expected Rift and each one's version")
         return loader.group(1)
 
     def unit_state(unit):
@@ -890,7 +893,7 @@ def main():
         says whether systemd-boot counted this boot: a uki marked good on an earlier boot has no
         counter left, then nothing marks this boot and the test starts boot-complete.target itself."""
         version = image_version()
-        uki = f"eclipse_{version}.efi"
+        uki = f"rift_{version}.efi"
         installed = sorted((v for v in (version, other) if v), key=version_key)
 
         _, output = run("ls /dev/disk/by-designator/", "udev's names for the partitions of the boot drive")
@@ -925,7 +928,7 @@ def main():
             if status != 0 or unit_state("boot-complete.target") != "active":
                 fail(f"boot-complete.target could not be reached: {without_console(output).strip()!r}")
             blessed = f"its uki has no counter and boot-complete.target was reached at {since()}"
-        ukis_on_esp([f"eclipse_{v}+0-{TRIES}.efi" if v == failed else f"eclipse_{v}.efi" for v in installed],
+        ukis_on_esp([f"rift_{v}+0-{TRIES}.efi" if v == failed else f"rift_{v}.efi" for v in installed],
                     "with the counters of good boots gone")
 
         # current is the newest version installed, which is not the running one after a rollback
@@ -964,7 +967,7 @@ def main():
         running = image_version()
         if running != version:
             fail(f"boot {done} came up running {running}, expected {version}")
-        uki = f"eclipse_{version}.efi"
+        uki = f"rift_{version}.efi"
         loader = started_by_systemd_boot(uki)
 
         deadline = time.monotonic() + 120
@@ -982,8 +985,8 @@ def main():
         verdict = assessment()
         if verdict != ("dirty" if left == 0 else "indeterminate"):
             fail(f"systemd-bless-boot says {verdict!r} on boot {done}, expected {'dirty' if left == 0 else 'indeterminate'}")
-        counter = f"eclipse_{version}+{left}-{done}.efi"
-        ukis_on_esp([f"eclipse_{good}.efi", counter], f"on boot {done} of {version}")
+        counter = f"rift_{version}+{left}-{done}.efi"
+        ukis_on_esp([f"rift_{good}.efi", counter], f"on boot {done} of {version}")
 
         parts = boot_drive()
         labels = [p[1] for p in parts[1:5]]
@@ -996,7 +999,7 @@ def main():
 
     running = check_slots()
 
-    # 2c. the drive eclipse-flash wrote. persist is luks2 with argon2id, the settings a person gets, and
+    # 2c. the drive rift-flash wrote. persist is luks2 with argon2id, the settings a person gets, and
     # its btrfs has every subvolume and the owner's home. with --exchange the exchange partition is an
     # exfat labelled EXCHANGE, as big as asked
     _, output = run("sudo cryptsetup luksDump /dev/disk/by-partlabel/persist", "the luks header of persist")
@@ -1008,9 +1011,9 @@ def main():
     missing = [name for name in ("@home", "@var", "@flatpak", "@models", "@hosts", "@snapshots") if name not in found]
     if missing:
         fail(f"persist has no {', '.join(missing)}: {without_console(output).strip()!r}")
-    _, output = run("stat -c home=%U:%G /home/eclipse", "the owner's home")
-    if "home=eclipse:users" not in output:
-        fail(f"/home/eclipse is not the owner's: {without_console(output).strip()!r}")
+    _, output = run("stat -c home=%U:%G /home/rift", "the owner's home")
+    if "home=rift:users" not in output:
+        fail(f"/home/rift is not the owner's: {without_console(output).strip()!r}")
     exchange_bytes = None
     if args.exchange:
         unit = {"G": 1024**3, "M": 1024**2}[args.exchange[-1].upper()]
@@ -1021,20 +1024,20 @@ def main():
         if not re.search(r"^TYPE=exfat\s*$", found, re.M) or not re.search(r"^LABEL=EXCHANGE\s*$", found, re.M) \
                 or not re.search(rf"^{exchange_bytes}\s*$", found, re.M):
             fail(f"the exchange partition is not an exfat of {exchange_bytes} bytes labelled EXCHANGE: {found.strip()!r}")
-    maker = "the first boot" if args.first_boot else "eclipse-flash"
+    maker = "the first boot" if args.first_boot else "rift-flash"
     ok(f"{maker} made persist luks2 with argon2id, every subvolume and the owner's home"
        + (f", and an exfat exchange partition of {args.exchange}" if args.exchange else ""))
 
-    # 2e. the system says Eclipse OS. os-release names it, keeps IMAGE_ID and IMAGE_VERSION the way
+    # 2e. the system says Rift. os-release names it, keeps IMAGE_ID and IMAGE_VERSION the way
     # sysupdate and the clone read them, and says NixOS only in ID_LIKE. hostnamectl and lsb-release
-    # say the same, eclipse --version --logo prints the logo over the name, /etc/issue puts the logo
+    # say the same, rift --version --logo prints the logo over the name, /etc/issue puts the logo
     # above a text console's login, and fastfetch shows the logo and the name
     logo = logo_lines()
     status, output = run("cat /etc/os-release", "/etc/os-release")
     release = dict(re.findall(r'^([A-Z_]+)="?([^"\n]*)"?\s*$', without_console(output), re.M))
-    wanted = {"NAME": "Eclipse OS", "ID": "eclipse", "ID_LIKE": "nixos", "IMAGE_ID": "eclipse",
-              "IMAGE_VERSION": running, "VERSION_ID": running, "PRETTY_NAME": f"Eclipse OS {running}",
-              "LOGO": "eclipse-logo", "ANSI_COLOR": "38;5;214"}
+    wanted = {"NAME": "Rift", "ID": "rift", "ID_LIKE": "nixos", "IMAGE_ID": "rift",
+              "IMAGE_VERSION": running, "VERSION_ID": running, "PRETTY_NAME": f"Rift {running}",
+              "LOGO": "rift-logo", "ANSI_COLOR": "38;2;93;172;217"}
     wrong = {key: release.get(key) for key, value in wanted.items() if release.get(key) != value}
     if status != 0 or wrong:
         fail(f"/etc/os-release has {wrong}, expected {wanted}: {release}")
@@ -1044,20 +1047,20 @@ def main():
     _, output = run("hostnamectl", "hostnamectl")
     printed = without_console(output)
     print(f"\nboot-test: hostnamectl printed:\n{printed}", flush=True)
-    for label, value in (("Operating System", f"Eclipse OS {running}"), ("OS Image", "eclipse"),
+    for label, value in (("Operating System", f"Rift {running}"), ("OS Image", "rift"),
                          ("OS Image Version", running)):
         if not re.search(rf"^\s*{label}:\s*{re.escape(value)}\s*$", printed, re.M):
             fail(f"hostnamectl does not say {label}: {value}")
     _, output = run("grep '^DISTRIB_DESCRIPTION=' /etc/lsb-release", "lsb-release")
-    if f'DISTRIB_DESCRIPTION="Eclipse OS {running}"' not in without_console(output):
-        fail(f"/etc/lsb-release does not say Eclipse OS {running}: {without_console(output).strip()!r}")
-    ok(f"os-release, hostnamectl and lsb-release say Eclipse OS {running}, IMAGE_ID is {release['IMAGE_ID']} "
+    if f'DISTRIB_DESCRIPTION="Rift {running}"' not in without_console(output):
+        fail(f"/etc/lsb-release does not say Rift {running}: {without_console(output).strip()!r}")
+    ok(f"os-release, hostnamectl and lsb-release say Rift {running}, IMAGE_ID is {release['IMAGE_ID']} "
        f"and IMAGE_VERSION {release['IMAGE_VERSION']}")
 
-    status, output = run("eclipse --version --logo | cat", "eclipse --version --logo")
+    status, output = run("rift --version --logo | cat", "rift --version --logo")
     printed = "\n".join(line.rstrip() for line in without_console(output).split("\n"))
-    if status != 0 or "\n".join(logo) + f"\n\nEclipse OS {running}" not in printed:
-        fail(f"eclipse --version --logo printed {printed!r}, expected the logo with Eclipse OS {running} under it")
+    if status != 0 or "\n".join(logo) + f"\n\nRift {running}" not in printed:
+        fail(f"rift --version --logo printed {printed!r}, expected the logo with Rift {running} under it")
     _, output = run("cat /etc/issue", "/etc/issue")
     issue = without_console(output)
     # agetty's escapes out of the way: the colours, the resets and the doubled backslashes
@@ -1067,16 +1070,17 @@ def main():
     started = time.monotonic()
     status, output = run("fastfetch --pipe", "fastfetch")
     took = time.monotonic() - started
-    printed = without_console(output)
+    # a raw logo file keeps its colours even in a pipe
+    printed = ESCAPES.sub("", without_console(output))
     print(f"\nboot-test: fastfetch --pipe printed in {took:.1f}s:\n{printed}", flush=True)
     if status != 0 or not printed.startswith(logo[0]):
         fail(f"fastfetch does not start with the logo's first line {logo[0]!r}")
-    if not re.search(rf"\bOS: Eclipse OS {re.escape(running)}\b", printed):
-        fail(f"fastfetch does not say OS: Eclipse OS {running}")
+    if not re.search(rf"\bOS: Rift {re.escape(running)}\b", printed):
+        fail(f"fastfetch does not say OS: Rift {running}")
     missing = [key for key in ("Host class", "AI tier", "Last snapshot") if f"{key}: " not in printed]
     if missing:
         fail(f"fastfetch shows no {', '.join(missing)}")
-    ok(f"eclipse --version --logo, /etc/issue and fastfetch in {took:.1f}s show the logo and Eclipse OS {running}")
+    ok(f"rift --version --logo, /etc/issue and fastfetch in {took:.1f}s show the logo and Rift {running}")
 
     # 2d. a drive written with --first-boot. persist has one key slot, the system runs with the machine
     # id in @var, and vault-first-boot said what it made. the next boot asks systemd-cryptsetup's
@@ -1118,7 +1122,7 @@ def main():
         first = made("after the first boot")
         if first["slots"] != ["0"]:
             fail(f"persist has the key slots {first['slots']} after the first boot, expected one")
-        in_var = one_line("sudo cat /persist/@var/lib/eclipse/machine-id", "the machine id in @var", machine_id)
+        in_var = one_line("sudo cat /persist/@var/lib/rift/machine-id", "the machine id in @var", machine_id)
         if in_var != first["machine"]:
             fail(f"the system runs with the machine id {first['machine']}, and @var holds {in_var}")
         printed = said("on the first boot")
@@ -1164,7 +1168,7 @@ def main():
     if state != "active":
         fail(f"syzygy.service is {state}, expected active")
 
-    hosts = "/var/lib/eclipse/hosts"
+    hosts = "/var/lib/rift/hosts"
     child.send(f"cat {hosts}/current\r")
     expect([r"(?<![0-9a-f])([0-9a-f]{64})\s"], "the fingerprint in hosts/current")
     fingerprint = child.match.group(1)
@@ -1214,7 +1218,7 @@ def main():
         fail("the profile writes a scale, but a 32 by 20 cm 1280x800 panel is about 102 dpi")
 
     # the bus. the interface is read only, so the owner reads it without sudo
-    bus, obj = "dev.eclipse.Syzygy", "/dev/eclipse/Syzygy"
+    bus, obj = "dev.rift.Syzygy", "/dev/rift/Syzygy"
     if count("bus", f"busctl --system list --no-pager --no-legend | grep -c '^{bus}'") != 1:
         fail(f"{bus} is not on the system bus")
 
@@ -1255,7 +1259,7 @@ def main():
         f"ai tier {ai_tier}, output {output.group(1)} scale {output.group(4)}, on the bus"
     )
 
-    # 3a. `eclipse host` reads the same properties off the bus and prints a row for each
+    # 3a. `rift host` reads the same properties off the bus and prints a row for each
     host_rows = {
         "Fingerprint": fingerprint,
         "Class": klass,
@@ -1263,16 +1267,16 @@ def main():
         "GPU path": gpu_path,
         "AI tier": ai_tier,
     }
-    status, printed = run("eclipse host", "eclipse host")
+    status, printed = run("rift host", "rift host")
     printed = without_console(printed)
-    print(f"\nboot-test: eclipse host printed:\n{printed}", flush=True)
+    print(f"\nboot-test: rift host printed:\n{printed}", flush=True)
     if status != 0:
-        fail(f"eclipse host exited with {status}")
+        fail(f"rift host exited with {status}")
     rows = dict(re.findall(r"^(Fingerprint|Class|Display|GPU path|AI tier):[ \t]+(.*?)[ \t]*$", printed, re.M))
     for label, value in host_rows.items():
         if rows.get(label) != value:
-            fail(f"eclipse host says {label} {rows.get(label)!r}, the bus says {value!r}")
-    ok(f"eclipse host printed fingerprint {fingerprint[:12]} and ai tier {ai_tier}, as the bus did")
+            fail(f"rift host says {label} {rows.get(label)!r}, the bus says {value!r}")
+    ok(f"rift host printed fingerprint {fingerprint[:12]} and ai tier {ai_tier}, as the bus did")
 
     # 4. aura. aurad reads the tier from syzygy, picks a model that is on the drive, runs
     # llama-server as its child and answers on the system bus. the name is there before the model
@@ -1284,7 +1288,7 @@ def main():
         if state not in ("active", "activating"):
             fail(f"aura.service is {state}, expected active")
 
-        aura, aura_path = "dev.eclipse.Aura", "/dev/eclipse/Aura"
+        aura, aura_path = "dev.rift.Aura", "/dev/rift/Aura"
 
         def aura_prop(name):
             """A string property of aura's, or None when the bus gave no answer."""
@@ -1363,23 +1367,23 @@ def main():
             fail(f"Ask on the bus said {kind} {answer!r} to {QUESTION!r}, expected an answer")
         ok(f"aura answered {QUESTION!r} on the bus with {answer!r}")
 
-        # 4a. the same question through `eclipse ai`, which prints the answer, and `eclipse ai`
+        # 4a. the same question through `rift ai`, which prints the answer, and `rift ai`
         # without one, which prints the properties the bus just gave
-        status, printed = run(f'eclipse ai "{QUESTION}"', "aura's answer through eclipse ai")
+        status, printed = run(f'rift ai "{QUESTION}"', "aura's answer through rift ai")
         printed = without_console(printed)
-        print(f'\nboot-test: eclipse ai "{QUESTION}" printed:\n{printed}', flush=True)
+        print(f'\nboot-test: rift ai "{QUESTION}" printed:\n{printed}', flush=True)
         if status != 0 or "paris" not in printed.lower():
-            fail(f"eclipse ai exited with {status} and did not say Paris")
-        ok(f"eclipse ai answered {printed!r}")
+            fail(f"rift ai exited with {status} and did not say Paris")
+        ok(f"rift ai answered {printed!r}")
 
-        status, printed = run("eclipse ai", "aura's state through eclipse ai")
+        status, printed = run("rift ai", "aura's state through rift ai")
         printed = without_console(printed)
-        print(f"\nboot-test: eclipse ai printed:\n{printed}", flush=True)
+        print(f"\nboot-test: rift ai printed:\n{printed}", flush=True)
         rows = dict(re.findall(r"^(State|Model|Tier):[ \t]+(.*?)[ \t]*$", printed, re.M))
         wanted = {"State": "ready", "Model": aura_model, "Tier": aura_tier}
         if status != 0 or rows != wanted:
-            fail(f"eclipse ai says {rows}, the bus says {wanted}")
-        ok("eclipse ai printed the state, model and tier the bus gave")
+            fail(f"rift ai says {rows}, the bus says {wanted}")
+        ok("rift ai printed the state, model and tier the bus gave")
 
         # 4c. search by meaning. aurad runs the embedding model beside the chat model, and the owner's
         # user manager has a unit that walks home, gets a vector for each part of a file from aura and
@@ -1398,13 +1402,13 @@ def main():
             embedding = tomllib.load(f)["embedding"][0]["id"]
         if aura_prop("EmbeddingModel") != embedding:
             fail(f"aura runs {aura_prop('EmbeddingModel')} for search, the manifest's embedding model is {embedding}")
-        status, printed = run("eclipse ai", "the search row of eclipse ai")
+        status, printed = run("rift ai", "the search row of rift ai")
         printed = without_console(printed)
         if status != 0 or not re.search(rf"^Search:[ \t]+ready, {re.escape(embedding)}[ \t]*$", printed, re.M):
-            fail(f"eclipse ai does not say search is ready with {embedding}: {printed!r}")
+            fail(f"rift ai does not say search is ready with {embedding}: {printed!r}")
         ok(f"aura loaded {embedding} for search by meaning")
 
-        notes = "/home/eclipse/notes"
+        notes = "/home/rift/notes"
         documents = {
             "garden.md": ["Tomatoes want six hours of sun.", "Water the beans early and pull weeds before they seed."],
             "bike.txt": ["Pump the tyres to 80 psi.",
@@ -1437,47 +1441,47 @@ def main():
         shown = dict(re.findall(r"^(\w+)=(\S*)\s*$", without_console(output), re.M))
         if shown.get("Result") != "success" or shown.get("ExecMainStatus") != "0" or shown.get("ConditionResult") != "yes":
             fail(f"aura-index.service ended with {shown}")
-        _, output = run("stat -c 'index=%U:%a' ~/.cache/eclipse ~/.cache/eclipse/search.index", "the index's owner")
+        _, output = run("stat -c 'index=%U:%a' ~/.cache/rift ~/.cache/rift/search.index", "the index's owner")
         modes = re.findall(r"index=(\w+:\d+)", output)
-        if modes != ["eclipse:700", "eclipse:600"]:
+        if modes != ["rift:700", "rift:600"]:
             fail(f"the index and its folder are {modes}, expected the owner's alone")
 
         # nothing changed since, so a second update reads nothing again
-        status, printed = run("eclipse ai index", "a second update of the index")
+        status, printed = run("rift ai index", "a second update of the index")
         printed = without_console(printed)
-        print(f"\nboot-test: eclipse ai index printed:\n{printed}", flush=True)
+        print(f"\nboot-test: rift ai index printed:\n{printed}", flush=True)
         counted = re.search(r"(\d+) files? (?:is|are) in the index\. (\d+) (?:was|were) new or changed", printed)
         if status != 0 or not counted:
-            fail(f"eclipse ai index exited with {status}: {printed!r}")
+            fail(f"rift ai index exited with {status}: {printed!r}")
         if int(counted.group(1)) < len(documents) or counted.group(2) != "0":
-            fail(f"eclipse ai index says {counted.group(0)!r}, expected the {len(documents)} files and none read again")
+            fail(f"rift ai index says {counted.group(0)!r}, expected the {len(documents)} files and none read again")
 
         for words, name in searches.items():
-            status, printed = run(f"eclipse ai search {words}", f"a search for {words}")
+            status, printed = run(f"rift ai search {words}", f"a search for {words}")
             printed = without_console(printed)
-            print(f"\nboot-test: eclipse ai search {words} printed:\n{printed}", flush=True)
+            print(f"\nboot-test: rift ai search {words} printed:\n{printed}", flush=True)
             rows = re.findall(r"^(~/\S+):(\d+)[ \t]+(\d{4}-\d{2}-\d{2})[ \t]*$", printed, re.M)
             if status != 0 or not rows:
-                fail(f"eclipse ai search {words} exited with {status} and listed no files")
+                fail(f"rift ai search {words} exited with {status} and listed no files")
             if rows[0][0] != f"~/notes/{name}":
-                fail(f"eclipse ai search {words} put {rows[0][0]} first, expected ~/notes/{name}")
-        ok("eclipse ai search found " + " and ".join(f"{name} for {words!r}" for words, name in searches.items())
+                fail(f"rift ai search {words} put {rows[0][0]} first, expected ~/notes/{name}")
+        ok("rift ai search found " + " and ".join(f"{name} for {words!r}" for words, name in searches.items())
            + ", by meaning")
 
-    # 4b. `eclipse doctor`: no check fails, and syzygy and aura each have a row. with the model
+    # 4b. `rift doctor`: no check fails, and syzygy and aura each have a row. with the model
     # loaded, aura's row has to pass
-    status, printed = run("eclipse doctor", "eclipse doctor")
+    status, printed = run("rift doctor", "rift doctor")
     printed = without_console(printed)
-    print(f"\nboot-test: eclipse doctor printed:\n{printed}", flush=True)
+    print(f"\nboot-test: rift doctor printed:\n{printed}", flush=True)
     rows = dict(re.findall(r"^(Syzygy|Aura|Persist|Memory|CPU|IO|System image)[ \t]+(Passed|Warning|Failed)[ \t]",
                            printed, re.M))
     if status != 0:
-        fail(f"eclipse doctor exited with {status}")
+        fail(f"rift doctor exited with {status}")
     if rows.get("Syzygy") != "Passed":
-        fail(f"eclipse doctor says Syzygy {rows.get('Syzygy')}, expected Passed")
+        fail(f"rift doctor says Syzygy {rows.get('Syzygy')}, expected Passed")
     if "Aura" not in rows or (args.models and rows["Aura"] != "Passed"):
-        fail(f"eclipse doctor says Aura {rows.get('Aura')}, expected Passed")
-    ok("eclipse doctor: " + ", ".join(f"{name} {verdict}" for name, verdict in rows.items()))
+        fail(f"rift doctor says Aura {rows.get('Aura')}, expected Passed")
+    ok("rift doctor: " + ", ".join(f"{name} {verdict}" for name, verdict in rows.items()))
 
     # 5. the desktop. greetd runs umbra on tty1 as the owner. umbra needs a moment to open the gpu
     # and paint its first frame, so the screendump is retried until it shows the background
@@ -1722,7 +1726,7 @@ def main():
                      rows=(1, LIST_ROWS))
 
     # 6. timeline. vault answers on the bus and a timer takes a snapshot of home every hour. take one,
-    # change a file and delete another, find the snapshot through eclipse snapshot and on the bus,
+    # change a file and delete another, find the snapshot through rift snapshot and on the bus,
     # and restore both from it
     _, output = run("systemctl is-active vault vault-timeline.timer", "the vault units")
     states = re.findall(r"^(active|inactive|failed|activating)\s*$", without_console(output), re.M)
@@ -1733,15 +1737,15 @@ def main():
         fail(f"vault-timeline.timer does not run every hour: {without_console(output).strip()!r}")
 
     snapshots = "/persist/@snapshots/home"
-    notes, todo = "/home/eclipse/timeline/notes.txt", "/home/eclipse/timeline/todo.txt"
+    notes, todo = "/home/rift/timeline/notes.txt", "/home/rift/timeline/todo.txt"
 
     def snapshot_list(what):
-        """The names `eclipse snapshot` prints, oldest first."""
-        status, output = run("eclipse snapshot", f"eclipse snapshot {what}")
+        """The names `rift snapshot` prints, oldest first."""
+        status, output = run("rift snapshot", f"rift snapshot {what}")
         printed = without_console(output)
-        print(f"\nboot-test: eclipse snapshot {what} printed:\n{printed}", flush=True)
+        print(f"\nboot-test: rift snapshot {what} printed:\n{printed}", flush=True)
         if status != 0:
-            fail(f"eclipse snapshot exited with {status} {what}")
+            fail(f"rift snapshot exited with {status} {what}")
         return re.findall(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)\s*$", printed, re.M)
 
     def contents(path):
@@ -1749,19 +1753,19 @@ def main():
         return without_console(output) if status == 0 else f"nothing, cat exited with {status}"
 
     def restore(options, what):
-        status, output = run(f"eclipse snapshot restore {options}", what)
+        status, output = run(f"rift snapshot restore {options}", what)
         printed = without_console(output)
-        print(f"\nboot-test: eclipse snapshot restore {options} printed:\n{printed}", flush=True)
+        print(f"\nboot-test: rift snapshot restore {options} printed:\n{printed}", flush=True)
         return status, printed
 
     status, output = run(f"mkdir -p (dirname {notes}); and printf 'First draft\\n' > {notes}; "
                          f"and printf 'Buy milk\\n' > {todo}", "the files for the snapshot")
     if status != 0:
         fail(f"the files for the snapshot could not be written: {without_console(output).strip()!r}")
-    status, output = run("eclipse snapshot take", "eclipse snapshot take")
+    status, output = run("rift snapshot take", "rift snapshot take")
     taken = re.search(r"^Took snapshot (\S+Z)\.\s*$", without_console(output), re.M)
     if status != 0 or not taken:
-        fail(f"eclipse snapshot take exited with {status}: {without_console(output).strip()!r}")
+        fail(f"rift snapshot take exited with {status}: {without_console(output).strip()!r}")
     snapshot = taken.group(1)
     _, output = run(f"sudo btrfs property get -ts {snapshots}/{snapshot} ro", "whether the snapshot is read only")
     if "ro=true" not in output:
@@ -1773,17 +1777,17 @@ def main():
         fail("the files could not be changed")
     names = snapshot_list("after the changes")
     if snapshot not in names:
-        fail(f"eclipse snapshot lists {names}, without {snapshot}")
-    _, output = run("busctl --system --json=short call dev.eclipse.Vault /dev/eclipse/Vault dev.eclipse.Vault List",
+        fail(f"rift snapshot lists {names}, without {snapshot}")
+    _, output = run("busctl --system --json=short call dev.rift.Vault /dev/rift/Vault dev.rift.Vault List",
                     "the snapshots on the bus")
     found = re.search(r'\{"type":"as","data":\[(\[[^\]]*\])\]\}', output)
     on_bus = json.loads(found.group(1)) if found else without_console(output).strip()
     if on_bus != names:
-        fail(f"the bus lists {on_bus!r}, eclipse snapshot lists {names}")
+        fail(f"the bus lists {on_bus!r}, rift snapshot lists {names}")
     # the snapshot keeps home's permissions, so the owner reads their own files in it
-    if "Buy milk" not in contents(f"{snapshots}/{snapshot}/eclipse/timeline/todo.txt"):
+    if "Buy milk" not in contents(f"{snapshots}/{snapshot}/rift/timeline/todo.txt"):
         fail("the owner cannot read the deleted file in the snapshot")
-    ok(f"eclipse snapshot and the bus list {len(names)} snapshots with {snapshot}")
+    ok(f"rift snapshot and the bus list {len(names)} snapshots with {snapshot}")
 
     status, printed = restore(f"{snapshot} {todo}", "restoring the deleted file")
     if status != 0 or f"Restored {todo} from {snapshot}." not in printed:
@@ -1791,7 +1795,7 @@ def main():
     if "Buy milk" not in contents(todo):
         fail(f"{todo} did not come back as it was")
     _, output = run(f"stat -c owner=%U:%a {todo}", "the owner of the restored file")
-    if "owner=eclipse:644" not in output:
+    if "owner=rift:644" not in output:
         fail(f"the restored file is not the owner's own: {without_console(output).strip()!r}")
     # without a terminal to ask on, a file that changed stays as it is
     status, printed = restore(f"{snapshot} {notes} </dev/null", "restoring the changed file without --replace")
@@ -1838,7 +1842,7 @@ def main():
              f"2026-01-12T09:00:00Z or the newest")
     left = snapshot_list("after the retention rules")
     if left != sorted(set(before) - set(dropped)):
-        fail(f"eclipse snapshot lists {left} after the rules dropped {dropped} out of {before}")
+        fail(f"rift snapshot lists {left} after the rules dropped {dropped} out of {before}")
     ok(f"the retention rules dropped {len(dropped)} of {len(before)} snapshots and kept {', '.join(left)}")
 
     # 6b. backup. the drive labelled backup is an empty ext4 disk. the test mounts it the way a desktop
@@ -1847,14 +1851,14 @@ def main():
     # then look at the repository on the disk
     if args.backup:
         disk = "/run/backup-disk"
-        folder = f"{disk}/Eclipse"
-        letter, plan = "/home/eclipse/backup/letter.txt", "/home/eclipse/backup/plan.txt"
+        folder = f"{disk}/Rift"
+        letter, plan = "/home/rift/backup/letter.txt", "/home/rift/backup/plan.txt"
         words = "Kept in the backup 4127"
 
         def backup_cli(options, what):
-            status, output = run(f"eclipse backup {options}", what)
+            status, output = run(f"rift backup {options}", what)
             printed = without_console(output)
-            print(f"\nboot-test: eclipse backup {options} printed:\n{printed}", flush=True)
+            print(f"\nboot-test: rift backup {options} printed:\n{printed}", flush=True)
             return status, printed
 
         def with_disk(what):
@@ -1874,7 +1878,7 @@ def main():
         if status != 0 or f"Backups of home go to {folder} now." not in printed or not found:
             fail(f"sudo vault target exited with {status} without the folder and a password")
         password = found.group(1)
-        _, output = run("sudo stat -c key=%a:%U /var/lib/eclipse/vault/backup.key", "who can read the password")
+        _, output = run("sudo stat -c key=%a:%U /var/lib/rift/vault/backup.key", "who can read the password")
         if "key=600:root" not in output:
             fail(f"the backup password is not only root's: {without_console(output).strip()!r}")
         status, _ = run(f"sudo umount {disk}", "unmounting the backup disk")
@@ -1886,15 +1890,15 @@ def main():
         made = re.search(r"^Backed up home as ([0-9a-f]{8}) at (\S+Z)\.\s*$", printed, re.M)
         if status != 0 or not made:
             _, log = run("journalctl -u vault --no-pager -n 20", "vault's log")
-            fail(f"eclipse backup now exited with {status}: {without_console(log).strip()[-800:]!r}")
+            fail(f"rift backup now exited with {status}: {without_console(log).strip()[-800:]!r}")
         backup = made.group(1)
         _, output = run("echo left=(count (sudo ls -A /persist/@snapshots/backup))", "the snapshot the backup read")
         if "left=0" not in output:
             fail(f"the snapshot the backup read is still there: {without_console(output).strip()!r}")
         status, printed = backup_cli("list", "the backups")
         if status != 0 or not re.search(rf"^{backup}  {made.group(2)}\s*$", printed, re.M):
-            fail(f"eclipse backup list exited with {status} without {backup} at {made.group(2)}")
-        _, output = run("busctl --system --json=short call dev.eclipse.Vault /dev/eclipse/Vault dev.eclipse.Vault Backups",
+            fail(f"rift backup list exited with {status} without {backup} at {made.group(2)}")
+        _, output = run("busctl --system --json=short call dev.rift.Vault /dev/rift/Vault dev.rift.Vault Backups",
                         "the backups on the bus")
         if f'"{backup}' not in output:
             fail(f"the bus does not list backup {backup}: {without_console(output).strip()!r}")
@@ -1909,7 +1913,7 @@ def main():
         if words not in contents(letter):
             fail(f"{letter} did not come back from the backup as it was")
         _, output = run(f"stat -c owner=%U:%a {letter}", "the owner of the file from the backup")
-        if "owner=eclipse:644" not in output:
+        if "owner=rift:644" not in output:
             fail(f"the file from the backup is not the owner's own: {without_console(output).strip()!r}")
         status, printed = backup_cli(f"restore {backup} {plan} </dev/null", "restoring the changed file without --replace")
         if status != 1 or f"{plan} has changed since this backup." not in printed or "--replace" not in printed:
@@ -1946,12 +1950,12 @@ def main():
         ok("rustic refuses the repository with a wrong password and opens it with the printed one, "
            "and the file's text is in none of its files")
 
-    # 6c. penumbra. `eclipse run --sandbox` runs a command in bwrap, under landlock rules and a seccomp
+    # 6c. penumbra. `rift run --sandbox` runs a command in bwrap, under landlock rules and a seccomp
     # filter. it gets the folder it runs in and the system's programs, nothing else of the owner's: not
     # the rest of home, not /persist, not a disk of the vm. what it writes outside its folder is gone
     # when it ends, and home as a whole goes in only read only
-    home, sandbox = "/home/eclipse", "/home/eclipse/sandbox"
-    secret, secret_words = "/home/eclipse/private.txt", "Kept out of the sandbox 5813"
+    home, sandbox = "/home/rift", "/home/rift/sandbox"
+    secret, secret_words = "/home/rift/private.txt", "Kept out of the sandbox 5813"
 
     def sandboxed(command, what):
         status, output = run(command, what)
@@ -1971,12 +1975,12 @@ def main():
         fail(f"lsblk lists no disks in the vm: {without_console(output).strip()!r}")
 
     # the folder it runs in is the one it gets
-    status, printed = sandboxed(f"cd {sandbox}; and eclipse run --sandbox sh -c 'echo made > made.txt; "
+    status, printed = sandboxed(f"cd {sandbox}; and rift run --sandbox sh -c 'echo made > made.txt; "
                                 f"grep -E \"^(NoNewPrivs|Seccomp):\" /proc/self/status; echo dev:; ls -A /dev; "
                                 f"echo home:; ls -A {home}'", "a command in a sandbox")
     run("cd ~", "going home again")
     if status != 0:
-        fail(f"eclipse run --sandbox exited with {status}")
+        fail(f"rift run --sandbox exited with {status}")
     if not re.search(r"^NoNewPrivs:\s+1\s*$", printed, re.M) or not re.search(r"^Seccomp:\s+2\s*$", printed, re.M):
         fail("the sandboxed command does not run with no new privileges and a seccomp filter")
     listed = re.search(r"^dev:\s*$(.*)^home:\s*$(.*)", printed, re.M | re.S)
@@ -1990,14 +1994,14 @@ def main():
     if listed.group(2).split() != ["sandbox"]:
         fail(f"home in the sandbox holds {listed.group(2).split()}, expected only the folder it runs in")
     _, output = run(f"stat -c owner=%U:%a {sandbox}/made.txt; and cat {sandbox}/made.txt", "the file the sandbox made")
-    if "owner=eclipse:644" not in output or not said(without_console(output), "made"):
+    if "owner=rift:644" not in output or not said(without_console(output), "made"):
         fail(f"the sandbox did not make {sandbox}/made.txt as the owner: {without_console(output).strip()!r}")
-    ok(f"eclipse run --sandbox ran in {sandbox} with a seccomp filter, no disk in /dev and nothing else of home")
+    ok(f"rift run --sandbox ran in {sandbox} with a seccomp filter, no disk in /dev and nothing else of home")
 
     # what it cannot reach. home and /tmp in the sandbox are empty and its own, the rest is not there
     status, printed = sandboxed(
-        f"eclipse run --sandbox --folder {sandbox} sh -c 'test -e /persist && echo persist-there; "
-        f"test -e /sys/block && echo sys-there; test -e /var/lib/eclipse && echo var-there; "
+        f"rift run --sandbox --folder {sandbox} sh -c 'test -e /persist && echo persist-there; "
+        f"test -e /sys/block && echo sys-there; test -e /var/lib/rift && echo var-there; "
         f"cat {secret} && echo secret-read; cat /dev/{disks[0]} > /dev/null && echo disk-read; "
         f"echo out > {home}/outside.txt && echo home-written; echo out > /tmp/outside.txt && echo tmp-written; "
         f"echo renamed > /proc/self/comm && echo proc-written; unshare --user true; echo finished'",
@@ -2019,7 +2023,7 @@ def main():
        f"was refused a user namespace, and what it wrote outside {sandbox} was gone")
 
     # home as a whole, read only
-    status, printed = sandboxed(f"eclipse run --sandbox --folder {sandbox} --read {home} sh -c 'cat {secret}; "
+    status, printed = sandboxed(f"rift run --sandbox --folder {sandbox} --read {home} sh -c 'cat {secret}; "
                                 f"echo changed > {secret} && echo secret-written; echo new > {sandbox}/new.txt "
                                 f"&& echo folder-written'", "a sandbox with home read only")
     if secret_words not in printed or said(printed, "secret-written") or not said(printed, "folder-written"):
@@ -2028,25 +2032,25 @@ def main():
         fail(f"{secret} changed after a sandbox had it read only")
     ok(f"with --read {home} the sandbox read {secret} and could not change it")
 
-    # what eclipse run refuses before anything runs
-    for command, words in ((f"eclipse run --sandbox --folder {sandbox} --read /persist true",
+    # what rift run refuses before anything runs
+    for command, words in ((f"rift run --sandbox --folder {sandbox} --read /persist true",
                             "/persist cannot go into a sandbox."),
-                           (f"eclipse run --sandbox --folder {sandbox} --read /dev/{disks[0]} true",
+                           (f"rift run --sandbox --folder {sandbox} --read /dev/{disks[0]} true",
                             f"/dev/{disks[0]} cannot go into a sandbox."),
-                           (f"eclipse run --sandbox --folder {home} true", f"{home} is all of your home folder."),
-                           ("cd ~; and eclipse run --sandbox true", "that is all of your home folder."),
-                           (f"sudo eclipse run --sandbox --folder {sandbox} true", "not as root."),
-                           ("eclipse run true", "--sandbox is needed")):
+                           (f"rift run --sandbox --folder {home} true", f"{home} is all of your home folder."),
+                           ("cd ~; and rift run --sandbox true", "that is all of your home folder."),
+                           (f"sudo rift run --sandbox --folder {sandbox} true", "not as root."),
+                           ("rift run true", "--sandbox is needed")):
         status, printed = sandboxed(command, f"what {command} refuses")
         if status not in (1, 2) or words not in " ".join(printed.split()):
             fail(f"{command} exited with {status} without saying {words!r}")
-    ok("eclipse run refused /persist, a disk, all of home, root and a command without --sandbox")
+    ok("rift run refused /persist, a disk, all of home, root and a command without --sandbox")
 
     # 6d. the network switch. penumbra keeps one for each app that runs in a sandbox, named after its
     # command or by --name. off cuts the network of the app's sandboxes that run now and of every one it
     # starts later, loopback included, and on gives it back. what is off stays off when penumbra starts
     # again. the vm reaches a server this test runs on the host through qemu's user network, at 10.0.2.2
-    served = tempfile.mkdtemp(prefix="eclipse-net-")
+    served = tempfile.mkdtemp(prefix="rift-net-")
     net_words = "Reached the test server 2718"
     with open(os.path.join(served, "net.txt"), "w", encoding="utf-8") as f:
         f.write(net_words + "\n")
@@ -2059,7 +2063,7 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = f"http://10.0.2.2:{server.server_address[1]}/net.txt"
     fetch = f"curl -s -m 4 {url}"
-    fetcher = "/home/eclipse/fetcher"
+    fetcher = "/home/rift/fetcher"
 
     def spaced(printed):
         return " ".join(printed.split())
@@ -2076,11 +2080,11 @@ def main():
     status, output = run("systemctl is-active penumbra", "whether penumbra runs")
     if status != 0:
         fail(f"penumbra is not running: {without_console(output).strip()!r}")
-    status, printed = sandboxed("eclipse net", "the apps before any is off")
+    status, printed = sandboxed("rift net", "the apps before any is off")
     if status != 0 or "Every app has the network" not in spaced(printed):
-        fail(f"eclipse net exited with {status} before any app was off, or did not say every app has the network")
+        fail(f"rift net exited with {status} before any app was off, or did not say every app has the network")
     run(f"mkdir -p {fetcher}", "the folder for the fetching sandboxes")
-    status, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} --name fetcher {fetch}",
+    status, printed = sandboxed(f"rift run --sandbox --folder {fetcher} --name fetcher {fetch}",
                                 "a sandbox that reaches the test server")
     if status != 0 or net_words not in printed:
         fail(f"a sandbox did not reach the test server at {url}, it exited with {status}")
@@ -2089,7 +2093,7 @@ def main():
     # a sandbox that goes on running. each time the test tells it to, it fetches and writes down what it got
     steps = ("for step in 1 2 3; do while ! test -e go-$step; do sleep 0.2; done; "
              f"curl -s -m 4 {url} > got-$step; echo $? > status-$step; done")
-    status, output = run(f"eclipse run --sandbox --folder {fetcher} --name fetcher sh -c '{steps}' "
+    status, output = run(f"rift run --sandbox --folder {fetcher} --name fetcher sh -c '{steps}' "
                          f"< /dev/null > {fetcher}/fetcher.log 2>&1 &; disown", "a sandbox that goes on running")
     if status != 0:
         fail(f"the sandbox that goes on running could not be started: {without_console(output).strip()!r}")
@@ -2118,12 +2122,12 @@ def main():
     print(f"\nboot-test: the user manager lists {units}", flush=True)
     if len(units) != 1:
         fail(f"the user manager lists {units} for fetcher, expected the one scope of the running sandbox")
-    status, printed = sandboxed("eclipse net off fetcher", "turning fetcher's network off while it runs")
+    status, printed = sandboxed("rift net off fetcher", "turning fetcher's network off while it runs")
     if status != 0 or "The network is off for fetcher, also in the sandbox it runs in now." not in spaced(printed):
-        fail(f"eclipse net off fetcher exited with {status} without saying it cut the running sandbox")
-    status, printed = sandboxed("eclipse net", "the apps with fetcher off")
+        fail(f"rift net off fetcher exited with {status} without saying it cut the running sandbox")
+    status, printed = sandboxed("rift net", "the apps with fetcher off")
     if status != 0 or not re.search(r"^fetcher\s+Off\s+1\s*$", printed, re.M):
-        fail(f"eclipse net does not list fetcher off with one sandbox running: {printed.strip()!r}")
+        fail(f"rift net does not list fetcher off with one sandbox running: {printed.strip()!r}")
     _, output = run("sudo nft list table inet penumbra", "penumbra's table")
     table = without_console(output)
     print(f"\nboot-test: sudo nft list table inet penumbra printed:\n{table}", flush=True)
@@ -2132,23 +2136,23 @@ def main():
     cut, got = fetched(2)
     if cut == 0 or net_words in got:
         fail("the running sandbox reached the test server after its network was turned off")
-    status, printed = sandboxed("eclipse net on fetcher", "turning fetcher's network on while it runs")
+    status, printed = sandboxed("rift net on fetcher", "turning fetcher's network on while it runs")
     if status != 0 or "The network is on for fetcher, also in the sandbox it runs in now." not in spaced(printed):
-        fail(f"eclipse net on fetcher exited with {status} without saying it gave the running sandbox the network back")
+        fail(f"rift net on fetcher exited with {status} without saying it gave the running sandbox the network back")
     code, got = fetched(3)
     if code != 0 or net_words not in got:
         fail(f"the running sandbox did not reach the test server after its network was on again, curl exited with {code}")
-    ok(f"eclipse net off cut the network of {units[0]} while it ran (curl exited with {cut}), and eclipse net on gave it back")
+    ok(f"rift net off cut the network of {units[0]} while it ran (curl exited with {cut}), and rift net on gave it back")
 
     # the next sandbox of an app that is off starts without the network. other apps keep theirs
-    status, printed = sandboxed("eclipse net off fetcher", "turning fetcher's network off")
+    status, printed = sandboxed("rift net off fetcher", "turning fetcher's network off")
     if status != 0 or "The network is off for fetcher" not in spaced(printed):
-        fail(f"eclipse net off fetcher exited with {status}")
-    status, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} --name fetcher {fetch}",
+        fail(f"rift net off fetcher exited with {status}")
+    status, printed = sandboxed(f"rift run --sandbox --folder {fetcher} --name fetcher {fetch}",
                                 "a new sandbox of fetcher while its network is off")
     if status == 0 or net_words in printed or "The network is off for fetcher." not in spaced(printed):
         fail(f"a new sandbox of fetcher exited with {status} while its network was off, or did not say it was off")
-    status, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} {fetch}", "a sandbox of curl")
+    status, printed = sandboxed(f"rift run --sandbox --folder {fetcher} {fetch}", "a sandbox of curl")
     if status != 0 or net_words not in printed:
         fail(f"a sandbox of curl did not reach the test server while fetcher's network was off, it exited with {status}")
     if args.models:
@@ -2156,7 +2160,7 @@ def main():
         loopback = "curl -s -o /dev/null -m 4 -w 'code=%{http_code}' http://127.0.0.1:11434/v1/models"
         codes = []
         for app in ("fetcher", "curl"):
-            _, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} --name {app} {loopback}",
+            _, printed = sandboxed(f"rift run --sandbox --folder {fetcher} --name {app} {loopback}",
                                    f"aura's local api from a sandbox of {app}")
             found = re.search(r"code=(\d{3})", printed)
             codes.append(found.group(1) if found else None)
@@ -2179,38 +2183,38 @@ def main():
     status, output = run("sudo systemctl restart penumbra; and systemctl is-active penumbra", "restarting penumbra")
     if status != 0:
         fail(f"penumbra did not start again: {without_console(output).strip()!r}")
-    _, output = run("sudo cat /var/lib/eclipse/penumbra/network-off", "the apps penumbra keeps off")
+    _, output = run("sudo cat /var/lib/rift/penumbra/network-off", "the apps penumbra keeps off")
     if not said(without_console(output), "fetcher"):
         fail(f"penumbra's file does not hold fetcher: {without_console(output).strip()!r}")
-    status, printed = sandboxed("eclipse net", "the apps after penumbra started again")
+    status, printed = sandboxed("rift net", "the apps after penumbra started again")
     if status != 0 or not re.search(r"^fetcher\s+Off\s+\d+\s*$", printed, re.M):
-        fail(f"eclipse net does not list fetcher off after penumbra started again: {printed.strip()!r}")
-    status, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} --name fetcher {fetch}",
+        fail(f"rift net does not list fetcher off after penumbra started again: {printed.strip()!r}")
+    status, printed = sandboxed(f"rift run --sandbox --folder {fetcher} --name fetcher {fetch}",
                                 "a sandbox of fetcher after penumbra started again")
     if status == 0 or net_words in printed:
         fail(f"a sandbox of fetcher reached the test server after penumbra started again, it exited with {status}")
     ok("fetcher's network stayed off when penumbra started again")
 
     # what the switch refuses
-    for command, words, codes in (("eclipse net off 'no/such'", "cannot be the name of an app.", (2,)),
-                                  (f"eclipse run --sandbox --folder {fetcher} --name 'a b' true",
+    for command, words, codes in (("rift net off 'no/such'", "cannot be the name of an app.", (2,)),
+                                  (f"rift run --sandbox --folder {fetcher} --name 'a b' true",
                                    "cannot be the name of an app.", (2,)),
                                   ("penumbra start -- true", "is not in one. Nothing was run.", (126,))):
         status, printed = sandboxed(command, f"what {command} refuses")
         if status not in codes or words not in spaced(printed):
             fail(f"{command} exited with {status} without saying {words!r}")
-    status, printed = sandboxed("sudo -u nobody busctl call dev.eclipse.Penumbra /dev/eclipse/Penumbra "
-                                "dev.eclipse.Penumbra SetNetwork sb fetcher true", "the switch turned by nobody")
-    _, listed = sandboxed("eclipse net", "the apps after nobody tried the switch")
+    status, printed = sandboxed("sudo -u nobody busctl call dev.rift.Penumbra /dev/rift/Penumbra "
+                                "dev.rift.Penumbra SetNetwork sb fetcher true", "the switch turned by nobody")
+    _, listed = sandboxed("rift net", "the apps after nobody tried the switch")
     if status == 0 or not re.search(r"^fetcher\s+Off\s+\d+\s*$", listed, re.M):
         fail(f"nobody turned fetcher's network on, busctl exited with {status}")
-    status, printed = sandboxed("eclipse net on fetcher", "turning fetcher's network on")
-    on_status, printed = sandboxed(f"eclipse run --sandbox --folder {fetcher} --name fetcher {fetch}",
+    status, printed = sandboxed("rift net on fetcher", "turning fetcher's network on")
+    on_status, printed = sandboxed(f"rift run --sandbox --folder {fetcher} --name fetcher {fetch}",
                                    "a sandbox of fetcher with its network on")
     if status != 0 or on_status != 0 or net_words not in printed:
-        fail(f"fetcher did not reach the test server after eclipse net on, which exited with {status}")
+        fail(f"fetcher did not reach the test server after rift net on, which exited with {status}")
     server.shutdown()
-    ok("eclipse net refused a name that is not an app's, penumbra refused a start outside a sandbox's scope, "
+    ok("rift net refused a name that is not an app's, penumbra refused a start outside a sandbox's scope, "
        "nobody could not turn the switch, and fetcher's network came back")
 
     # 6e. flatpak with portals. the test's own runtime and app, two bundles served from the host, go into
@@ -2219,7 +2223,7 @@ def main():
     # desktop portal about the network over the session bus, and the bus proxy keeps the rest of that
     # bus from it. the serial shell has no graphical session, so the portals come up by bus activation
     if args.flatpak:
-        app_id = "dev.eclipse.TestApp"
+        app_id = "dev.rift.TestApp"
         bundles = http.server.ThreadingHTTPServer(
             ("127.0.0.1", 0), functools.partial(Quiet, directory=os.path.abspath(args.flatpak)))
         threading.Thread(target=bundles.serve_forever, daemon=True).start()
@@ -2235,10 +2239,10 @@ def main():
             if status != 0:
                 fail(f"flatpak did not install the {bundle} bundle, it exited with {status}")
         _, printed = sandboxed("flatpak list --user --columns=application,branch | cat", "the installed flatpaks")
-        for ref in ("dev.eclipse.TestPlatform", app_id):
+        for ref in ("dev.rift.TestPlatform", app_id):
             if not re.search(rf"^{re.escape(ref)}\s+test\s*$", printed, re.M):
                 fail(f"flatpak list does not show {ref} on its test branch")
-        ok(f"flatpak installed dev.eclipse.TestPlatform and {app_id} for the owner from bundles")
+        ok(f"flatpak installed dev.rift.TestPlatform and {app_id} for the owner from bundles")
 
         # a file of home, exported for the app by the document portal. the app finds it under
         # /run/flatpak/doc and not where it is
@@ -2311,14 +2315,14 @@ def main():
             if status != 0:
                 fail(f"{directory} on the updates drive could not be mounted on {UPDATES}: {without_console(output).strip()!r}")
             print(f"\nboot-test: {UPDATES} holds:\n" + "\n".join(names), flush=True)
-            new = next((found.group(1) for found in (re.fullmatch(r"eclipse_([^_]+)\.efi", name) for name in names)
+            new = next((found.group(1) for found in (re.fullmatch(r"rift_([^_]+)\.efi", name) for name in names)
                         if found), None)
             if not new or version_key(new) <= version_key(running):
                 fail(f"{directory} on the updates drive has no uki of a version after {running}: {names}")
 
             def uuid_in_name(kind):
                 for name in names:
-                    found = re.fullmatch(rf"eclipse_{re.escape(new)}_([0-9a-fA-F-]{{36}})\.{kind}(?:\.zst)?", name)
+                    found = re.fullmatch(rf"rift_{re.escape(new)}_([0-9a-fA-F-]{{36}})\.{kind}(?:\.zst)?", name)
                     if found:
                         return found.group(1).lower()
                 fail(f"{directory} on the updates drive has no {kind} file for {new}: {names}")
@@ -2346,8 +2350,8 @@ def main():
                      f"{new} current and {running} installed next to it")
 
             # all tries left and none done. systemd-boot takes one off each time it starts the file
-            fresh = f"eclipse_{new}+{TRIES}-0.efi"
-            ukis_on_esp([f"eclipse_{running}.efi", fresh], "after the update")
+            fresh = f"rift_{new}+{TRIES}-0.efi"
+            ukis_on_esp([f"rift_{running}.efi", fresh], "after the update")
 
             # the table on the drive itself, udev may not have read the new labels yet
             _, output = run("sudo sfdisk --dump /dev/(lsblk -no PKNAME /dev/disk/by-designator/esp)",
@@ -2402,12 +2406,12 @@ def main():
         ok(f"{broken} failed {TRIES} boots and {new} started again from slot b, sysupdate still lists {broken}")
 
     # 8. the clone. the vm has an empty scsi disk that says it is removable, the way a card reader or
-    # a usb bridge does. eclipse clone refuses the drive this system runs from, a disk that is not
+    # a usb bridge does. rift clone refuses the drive this system runs from, a disk that is not
     # removable and a serial that is not the disk's, then writes the running drive onto the removable
     # disk with a passphrase of its own. before the vm goes down the test reads what it wrote: the
     # partition table, the store against its verity tree and the luks header. step 10 boots it
     if args.clone:
-        clone_letter = "/home/eclipse/clone/letter.txt"
+        clone_letter = "/home/rift/clone/letter.txt"
         clone_words = "Written before the clone 7051"
         status, output = run(f"mkdir -p (dirname {clone_letter}); and printf '{clone_words}\\n' > {clone_letter}",
                              "the file for the clone")
@@ -2442,7 +2446,7 @@ def main():
         first_snapshots = snapshot_list("before the clone")
         key_hash = None
         if args.backup:
-            key_hash = one_line("sudo sha256sum /var/lib/eclipse/vault/backup.key", "the hash of the backup password",
+            key_hash = one_line("sudo sha256sum /var/lib/rift/vault/backup.key", "the hash of the backup password",
                                 r"^([0-9a-f]{64})\s")
 
         # the disks by serial. the one removable disk is the clone's
@@ -2460,38 +2464,38 @@ def main():
                          "the clone's disk in /dev/disk/by-id", r"^link=(\S+)\s*$")
 
         def clone_cli(disk, typed, what):
-            status, output = run(f"printf '%s\\n' '{CLONE_PASSPHRASE}' | sudo eclipse clone --serial '{typed}' {disk}", what)
+            status, output = run(f"printf '%s\\n' '{CLONE_PASSPHRASE}' | sudo rift clone --serial '{typed}' {disk}", what)
             printed = without_console(output)
-            print(f"\nboot-test: sudo eclipse clone --serial {typed} {disk} printed:\n{printed}", flush=True)
+            print(f"\nboot-test: sudo rift clone --serial {typed} {disk} printed:\n{printed}", flush=True)
             return status, printed
 
-        status, printed = clone_cli(f"/dev/{boot}", "eclipse", "a clone onto the drive this system runs from")
+        status, printed = clone_cli(f"/dev/{boot}", "rift", "a clone onto the drive this system runs from")
         if status != 1 or "is the drive this system runs from." not in printed:
-            fail(f"eclipse clone onto the running drive exited with {status}, expected 1 and a refusal")
+            fail(f"rift clone onto the running drive exited with {status}, expected 1 and a refusal")
         if args.backup:
             backup_disk = next((disk["PATH"] for disk in disks if disk.get("SERIAL") == "backup"), None)
             if not backup_disk:
                 fail("lsblk lists no disk with the serial backup")
             status, printed = clone_cli(backup_disk, "backup", "a clone onto a disk that is not removable")
             if status != 1 or "is neither removable nor on USB." not in printed:
-                fail(f"eclipse clone onto the backup disk exited with {status}, expected 1 and a refusal")
+                fail(f"rift clone onto the backup disk exited with {status}, expected 1 and a refusal")
         status, printed = clone_cli(by_id, f"not-{serial}", "a clone with a serial that is not the disk's")
         if status != 1 or f"is not the serial of {target}. Nothing was written." not in printed:
-            fail(f"eclipse clone with a wrong serial exited with {status}, expected 1 and a refusal")
+            fail(f"rift clone with a wrong serial exited with {status}, expected 1 and a refusal")
         _, output = run(f"lsblk --noheadings --list --output NAME {target}", "the clone's disk after the refusals")
         if len(without_console(output).split()) != 1:
-            fail(f"{target} has partitions after eclipse clone refused it: {without_console(output).strip()!r}")
-        ok("eclipse clone refused the running drive, a disk that is not removable and a wrong serial, and wrote nothing")
+            fail(f"{target} has partitions after rift clone refused it: {without_console(output).strip()!r}")
+        ok("rift clone refused the running drive, a disk that is not removable and a wrong serial, and wrote nothing")
 
         started = time.monotonic()
-        status, printed = clone_cli(by_id, serial, "eclipse clone")
+        status, printed = clone_cli(by_id, serial, "rift clone")
         took = time.monotonic() - started
         if status != 0 or f"is a second drive now, with version {cloned} " not in printed:
-            fail(f"eclipse clone exited with {status}")
+            fail(f"rift clone exited with {status}")
         _, output = run("sudo ls -A /persist/@snapshots/clone", "the snapshots the clone sent")
         if without_console(output).strip():
             fail(f"the clone left snapshots behind: {without_console(output).strip()!r}")
-        ok(f"eclipse clone wrote {cloned} onto {target} ({by_id}) in {took:.0f}s")
+        ok(f"rift clone wrote {cloned} onto {target} ({by_id}) in {took:.0f}s")
 
         # slot a holds the running version under the uuids its uki looks for, slot b is empty
         _, output = run(f"sudo sfdisk --dump {target}", "the clone's partition table")
@@ -2605,7 +2609,7 @@ def main():
         if clone_words not in contents(clone_letter):
             fail(f"{clone_letter} is not on the clone")
         _, output = run(f"stat -c owner=%U:%a {clone_letter}", "the owner of the file on the clone")
-        if "owner=eclipse:644" not in output:
+        if "owner=rift:644" not in output:
             fail(f"the file on the clone is not the owner's own: {without_console(output).strip()!r}")
         ok(f"{clone_letter} is on the clone, the owner's own")
 
@@ -2623,7 +2627,7 @@ def main():
         carried = [name for name in first_snapshots if name in output]
         if carried:
             fail(f"the clone has the first drive's snapshots {carried}")
-        if key_hash and one_line("sudo sha256sum /var/lib/eclipse/vault/backup.key", "the backup password on the clone",
+        if key_hash and one_line("sudo sha256sum /var/lib/rift/vault/backup.key", "the backup password on the clone",
                                  r"^([0-9a-f]{64})\s") != key_hash:
             fail("the clone does not have the backup password of the first drive")
         ok(f"the clone booted {cloned} from its own esp, with a machine id of its own, none of the first drive's "

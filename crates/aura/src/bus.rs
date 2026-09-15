@@ -1,4 +1,4 @@
-//! Aura on the system bus: `dev.eclipse.Aura` at `/dev/eclipse/Aura`.
+//! Aura on the system bus: `dev.rift.Aura` at `/dev/rift/Aura`.
 //!
 //! `Ask` takes a question and returns two strings, a kind and a text: `answer` and the answer in
 //! words, or `action` and the words of one of Corona's OS commands. It runs nothing. `Embed` turns
@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use libeclipse::Component;
+use librift::Component;
 use zbus::fdo;
 
 use crate::backend::{State, Status};
@@ -45,7 +45,7 @@ fn now(status: &Mutex<Status>) -> Status {
         .clone()
 }
 
-#[zbus::interface(name = "dev.eclipse.Aura")]
+#[zbus::interface(name = "dev.rift.Aura")]
 impl Aura {
     /// Answers a question: `answer` and plain text, or `action` and the words of a command.
     #[zbus(out_args("kind", "text"))]
@@ -199,7 +199,7 @@ pub fn connect(aura: Aura) -> zbus::Result<zbus::blocking::Connection> {
         .build()
 }
 
-/// Takes `dev.eclipse.Aura`. systemd counts the service as started from here on.
+/// Takes `dev.rift.Aura`. systemd counts the service as started from here on.
 ///
 /// # Errors
 ///

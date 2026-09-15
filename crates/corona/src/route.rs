@@ -5,7 +5,7 @@
 //! are reserved for the OS commands, everything else goes to the launcher first, then to the
 //! shell if it reads like a pipeline, and the rest is a question for Aura.
 
-use libeclipse::os::{self, Action};
+use librift::os::{self, Action};
 
 use crate::launcher::App;
 
@@ -70,7 +70,7 @@ const SHELL_WORDS: &[&str] = &[
     "nmcli",
     "wpctl",
     "umbra",
-    "eclipse",
+    "rift",
 ];
 
 /// Decide what `input` means against the known apps.

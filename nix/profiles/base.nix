@@ -1,4 +1,4 @@
-# what every eclipse image has
+# what every rift image has
 {
   config,
   lib,
@@ -8,10 +8,10 @@
 }:
 let
   system = pkgs.stdenv.hostPlatform.system;
-  eclipseWorkspace = self.packages.${system}.workspace;
+  riftWorkspace = self.packages.${system}.workspace;
 in
 {
-  networking.hostName = "eclipse";
+  networking.hostName = "rift";
   networking.networkmanager = {
     enable = true;
     wifi.backend = "iwd";
@@ -36,9 +36,9 @@ in
 
   # dev account until first boot setup replaces it with the real owner
   users.mutableUsers = false;
-  users.users.eclipse = {
+  users.users.rift = {
     isNormalUser = true;
-    description = "Eclipse owner";
+    description = "Rift owner";
     extraGroups = [
       "wheel"
       "networkmanager"
@@ -47,12 +47,12 @@ in
       "render"
     ];
     shell = pkgs.fish;
-    initialPassword = "eclipse";
+    initialPassword = "rift";
   };
   security.sudo.wheelNeedsPassword = false;
 
   environment.systemPackages = with pkgs; [
-    eclipseWorkspace # aurad, syzygy, corona, eclipse, ...
+    riftWorkspace # aurad, syzygy, corona, rift, ...
     helix
     zellij
     nushell

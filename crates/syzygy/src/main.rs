@@ -102,7 +102,7 @@ fn main() -> ExitCode {
 
 /// `Ok(None)` means the program already did what was asked (help or version).
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String> {
-    let mut hosts_dir = PathBuf::from(libeclipse::paths::HOSTS);
+    let mut hosts_dir = PathBuf::from(librift::paths::HOSTS);
     let mut print = false;
     let mut serve = false;
     let mut args = args.peekable();
@@ -114,7 +114,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             "--print" => print = true,
             "--serve" => serve = true,
             "--version" | "-V" => {
-                println!("syzygy {}", libeclipse::VERSION);
+                println!("syzygy {}", librift::VERSION);
                 return Ok(None);
             }
             "--help" | "-h" => {
@@ -136,7 +136,7 @@ fn usage() {
     println!("Works out what this machine is and writes or updates its profile.\n");
     println!(
         "  --hosts-dir <dir>  where profiles live (default {})",
-        libeclipse::paths::HOSTS
+        librift::paths::HOSTS
     );
     println!("  --print            print the effective profile and write nothing");
     println!("  --serve            after writing, answer on the system bus and stay running");
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn defaults() {
         let args = parse(&[]).unwrap().unwrap();
-        assert_eq!(args.hosts_dir, PathBuf::from(libeclipse::paths::HOSTS));
+        assert_eq!(args.hosts_dir, PathBuf::from(librift::paths::HOSTS));
         assert!(!args.print);
         assert!(!args.serve);
     }

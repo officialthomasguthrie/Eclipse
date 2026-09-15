@@ -1,4 +1,4 @@
-//! penumbra: sandboxes and their network switch. `eclipse run --sandbox` starts `penumbra run`,
+//! penumbra: sandboxes and their network switch. `rift run --sandbox` starts `penumbra run`,
 //! which checks what the sandbox may see and starts it in a systemd scope named for its app. In the
 //! scope `penumbra start` asks Penumbra on the system bus whether the app has the network, which
 //! cuts the scope's first when it does not, and starts bwrap. bwrap builds the sandbox, with mounts,
@@ -18,16 +18,16 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::{env, fs, io};
 
-use libeclipse::penumbra::{name_problem, scope_unit};
+use librift::penumbra::{name_problem, scope_unit};
 use policy::Request;
 
-const USAGE: &str = "Usage: eclipse run --sandbox [--name <app>] [--folder <folder>] \
+const USAGE: &str = "Usage: rift run --sandbox [--name <app>] [--folder <folder>] \
 [--read <path>]... [--write <path>]... <command> [<argument>]...";
 
 const HELP: &str = "Runs a command in a sandbox. It sees the system's programs, the folder you \
 are in, and nothing else of yours: not the rest of your home folder, not /persist, and not the \
 computer's disks. It can change files only in that folder, and what it writes anywhere else is \
-gone when it ends. It can use the network until eclipse net off takes it away from its app. The \
+gone when it ends. It can use the network until rift net off takes it away from its app. The \
 app is named after the command, or --name gives it a name. --folder gives it another folder to \
 run in, --read shows it one more file or folder read only, and --write gives it one more to \
 change. Only what is inside your home folder or inside /tmp can go into a sandbox, and your home \
@@ -42,13 +42,13 @@ fn main() -> ExitCode {
         Some("enter") => enter(rest),
         Some("serve") => serve(rest),
         Some("--version" | "-V") => {
-            println!("penumbra {}", libeclipse::VERSION);
+            println!("penumbra {}", librift::VERSION);
             ExitCode::SUCCESS
         }
         _ => {
             eprintln!(
-                "penumbra runs commands in a sandbox for eclipse run --sandbox and keeps their \
-                 network switch for eclipse net.\n{USAGE}\n       penumbra serve [--state <folder>] \
+                "penumbra runs commands in a sandbox for rift run --sandbox and keeps their \
+                 network switch for rift net.\n{USAGE}\n       penumbra serve [--state <folder>] \
                  [--cgroups <folder>]"
             );
             ExitCode::from(2)
@@ -71,12 +71,12 @@ fn run(args: &[String]) -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Err(why) => {
-            eprintln!("eclipse run: {why}\n{USAGE}");
+            eprintln!("rift run: {why}\n{USAGE}");
             return ExitCode::from(2);
         }
     };
     if rustix::process::getuid().is_root() {
-        eprintln!("eclipse run --sandbox runs a command as you, not as root. Run it without sudo.");
+        eprintln!("rift run --sandbox runs a command as you, not as root. Run it without sudo.");
         return ExitCode::FAILURE;
     }
     match sandbox_line(&app, &request) {
@@ -203,10 +203,10 @@ fn start(args: &[String]) -> ExitCode {
         eprintln!("penumbra start: bwrap's arguments are needed after --");
         return ExitCode::from(2);
     };
-    match libeclipse::penumbra::starting() {
+    match librift::penumbra::starting() {
         Ok((_, true)) => {}
         Ok((app, false)) => {
-            eprintln!("The network is off for {app}. eclipse net on {app} turns it on.");
+            eprintln!("The network is off for {app}. rift net on {app} turns it on.");
         }
         Err(why) => {
             eprintln!("{why} Nothing was run.");
@@ -285,7 +285,7 @@ fn confine(_read: &[PathBuf], _write: &[PathBuf]) -> Result<(), String> {
 
 /// Penumbra on the system bus, with the apps that are off from the state folder.
 fn serve(args: &[String]) -> ExitCode {
-    let mut state = PathBuf::from(libeclipse::paths::PENUMBRA_STATE);
+    let mut state = PathBuf::from(librift::paths::PENUMBRA_STATE);
     let mut cgroups = PathBuf::from("/sys/fs/cgroup");
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -394,7 +394,7 @@ mod tests {
             scope_line(
                 "yt-dlp",
                 4711,
-                Path::new("/nix/store/x-eclipse/bin/penumbra"),
+                Path::new("/nix/store/x-rift/bin/penumbra"),
                 vec!["--unshare-all".into(), "--".into(), "ls".into()]
             ),
             [
@@ -407,7 +407,7 @@ mod tests {
                 "--unit",
                 "app-penumbra-yt-dlp-4711.scope",
                 "--",
-                "/nix/store/x-eclipse/bin/penumbra",
+                "/nix/store/x-rift/bin/penumbra",
                 "start",
                 "--",
                 "--unshare-all",

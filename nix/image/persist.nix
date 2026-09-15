@@ -1,5 +1,5 @@
 # persist: luks2 around btrfs, one subvolume per kind of personal data.
-# it is whatever is left of the stick, so the image build never makes it. eclipse-flash makes it on
+# it is whatever is left of the stick, so the image build never makes it. rift-flash makes it on
 # linux; a drive written on macos or windows, or with --first-boot, makes it at its first boot.
 {
   config,
@@ -90,8 +90,8 @@ in
     "/home" = subvol "@home";
     "/var" = subvol "@var";
     "/var/lib/flatpak" = subvol "@flatpak";
-    "/var/lib/eclipse/models" = subvol "@models";
-    "/var/lib/eclipse/hosts" = subvol "@hosts";
+    "/var/lib/rift/models" = subvol "@models";
+    "/var/lib/rift/hosts" = subvol "@hosts";
   };
 
   # compressed swap in ram, never on the stick
@@ -103,9 +103,9 @@ in
   swapDevices = [ ];
 
   # keep the machine id across boots even though root is tmpfs
-  environment.etc."machine-id".source = "/var/lib/eclipse/machine-id";
+  environment.etc."machine-id".source = "/var/lib/rift/machine-id";
   systemd.tmpfiles.rules = [
-    "d /var/lib/eclipse 0755 root root -"
-    "d /var/lib/eclipse/aura 0750 root root -"
+    "d /var/lib/rift 0755 root root -"
+    "d /var/lib/rift/aura 0750 root root -"
   ];
 }

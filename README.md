@@ -1,14 +1,14 @@
 <div align="center">
 
-# Eclipse OS
+# Rift
 
 A portable Linux distribution that runs from a USB drive, keeps its owner's data encrypted on that drive, and leaves the host computer's disks untouched.
 
 <p>
-<a href="https://github.com/officialthomasguthrie/Eclipse/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/officialthomasguthrie/Eclipse/ci.yml?branch=main&style=flat-square&label=build&logo=githubactions&logoColor=white&labelColor=2e2e2e"></a>
+<a href="https://github.com/officialthomasguthrie/Rift/actions/workflows/ci.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/officialthomasguthrie/Rift/ci.yml?branch=main&style=flat-square&label=build&logo=githubactions&logoColor=white&labelColor=2e2e2e"></a>
 <img alt="Version" src="https://img.shields.io/badge/version-0.1.0%20pre--release-3584e4?style=flat-square&labelColor=2e2e2e">
 <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--3.0--or--later-3584e4?style=flat-square&labelColor=2e2e2e"></a>
-<a href="https://github.com/officialthomasguthrie/Eclipse/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/officialthomasguthrie/Eclipse/main?style=flat-square&label=last%20commit&labelColor=2e2e2e&color=555555"></a>
+<a href="https://github.com/officialthomasguthrie/Rift/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/officialthomasguthrie/Rift/main?style=flat-square&label=last%20commit&labelColor=2e2e2e&color=555555"></a>
 </p>
 
 <p>
@@ -31,11 +31,11 @@ A portable Linux distribution that runs from a USB drive, keeps its owner's data
 
 ## Overview
 
-Eclipse OS is a general purpose desktop operating system designed to live on a portable drive rather than inside a particular computer. The drive holds two things that are kept strictly apart: a read-only system image that is verified as it is read, and an encrypted volume that holds everything belonging to the owner, including files, applications, AI models and per-machine settings.
+Rift is a general purpose desktop operating system designed to live on a portable drive rather than inside a particular computer. The drive holds two things that are kept strictly apart: a read-only system image that is verified as it is read, and an encrypted volume that holds everything belonging to the owner, including files, applications, AI models and per-machine settings.
 
-Booted on a compatible PC, Eclipse OS uses that machine's processor, memory, graphics, display and network, and presents the same desktop, files and configuration on every computer it is used with. The internal disks of the host are not mounted, and nothing is written to them.
+Booted on a compatible PC, Rift uses that machine's processor, memory, graphics, display and network, and presents the same desktop, files and configuration on every computer it is used with. The internal disks of the host are not mounted, and nothing is written to them.
 
-The system is assembled from nixpkgs with Nix, so each image is fully described by this repository and its lock file. Every component written for Eclipse OS is implemented in Rust.
+The system is assembled from nixpkgs with Nix, so each image is fully described by this repository and its lock file. Every component written for Rift is implemented in Rust.
 
 ## Features
 
@@ -51,7 +51,7 @@ The system is assembled from nixpkgs with Nix, so each image is fully described 
 - Personal data lives on a LUKS2 volume formatted with btrfs and zstd compression, divided into subvolumes by kind of data.
 - The volume is created on the first boot of a newly written drive and unlocked with a passphrase at each boot after that.
 - Memory pressure is absorbed by compressed RAM (zram). No swap space exists on the drive or on the host.
-- An optional exFAT partition provides ordinary storage that Windows, macOS and other Linux systems can read without Eclipse OS.
+- An optional exFAT partition provides ordinary storage that Windows, macOS and other Linux systems can read without Rift.
 
 ### Snapshots, backup and cloning
 
@@ -89,7 +89,7 @@ The system is assembled from nixpkgs with Nix, so each image is fully described 
 
 ### Privacy
 
-Eclipse OS contains no telemetry, requires no account, and depends on no online service to boot or to operate.
+Rift contains no telemetry, requires no account, and depends on no online service to boot or to operate.
 
 ## Components
 
@@ -102,25 +102,25 @@ Eclipse OS contains no telemetry, requires no account, and depends on no online 
 | Syzygy | Host detection and per-machine profiles |
 | Penumbra | Application sandboxing and network control |
 | Vault | Snapshots, backup and cloning |
-| eclipse-flash | Drive writer for Windows, macOS and Linux |
-| libeclipse | Shared library used by the tools above |
+| rift-flash | Drive writer for Windows, macOS and Linux |
+| librift | Shared library used by the tools above |
 
-System services are exposed on D-Bus under `dev.eclipse.*`.
+System services are exposed on D-Bus under `dev.rift.*`.
 
 ## Command line
 
-The `eclipse` command reaches the same services as the desktop.
+The `rift` command reaches the same services as the desktop.
 
 | Command | Purpose |
 |---|---|
-| `eclipse host` | Show the stored profile of the current machine |
-| `eclipse ai` | Ask a question, or index and search the home directory by meaning |
-| `eclipse doctor` | Check the drive, the host and the system services |
-| `eclipse snapshot` | List, take and restore from snapshots |
-| `eclipse backup` | List, make and restore from encrypted backups |
-| `eclipse clone` | Write a complete second drive with a new key |
-| `eclipse run --sandbox` | Run a command inside a sandbox |
-| `eclipse net` | Turn network access off or on for a sandboxed application |
+| `rift host` | Show the stored profile of the current machine |
+| `rift ai` | Ask a question, or index and search the home directory by meaning |
+| `rift doctor` | Check the drive, the host and the system services |
+| `rift snapshot` | List, take and restore from snapshots |
+| `rift backup` | List, make and restore from encrypted backups |
+| `rift clone` | Write a complete second drive with a new key |
+| `rift run --sandbox` | Run a command inside a sandbox |
+| `rift net` | Turn network access off or on for a sandboxed application |
 
 ## System requirements
 
@@ -138,17 +138,17 @@ The drive determines most of the system's responsiveness. Low-cost flash drives 
 
 ## Installation
 
-No release has been published yet. Installation images, together with their checksums, will be listed on the [releases page](https://github.com/officialthomasguthrie/Eclipse/releases) when the first version is available.
+No release has been published yet. Installation images, together with their checksums, will be listed on the [releases page](https://github.com/officialthomasguthrie/Rift/releases) when the first version is available.
 
-Drives are written with eclipse-flash, a graphical application and command-line tool for Windows, macOS and Linux. It only offers removable drives, and it refuses any disk that is internal, in use, or running the current system.
+Drives are written with rift-flash, a graphical application and command-line tool for Windows, macOS and Linux. It only offers removable drives, and it refuses any disk that is internal, in use, or running the current system.
 
 ## Building from source
 
 Building requires [Nix](https://nixos.org/download/) with flakes enabled. The image itself must be built on an x86_64-linux machine or through a remote builder of that type. The Rust workspace builds on Linux, macOS and Windows, apart from the compositor, which requires Linux.
 
 ```sh
-git clone https://github.com/officialthomasguthrie/Eclipse.git
-cd Eclipse
+git clone https://github.com/officialthomasguthrie/Rift.git
+cd Rift
 
 nix build .#image   # build the bootable disk image
 just vm             # boot the image in QEMU with KVM
@@ -162,7 +162,7 @@ Every change to `main` is built and tested by continuous integration. The pipeli
 
 ## Project status
 
-Eclipse OS is in active development ahead of its first public release.
+Rift is in active development ahead of its first public release.
 
 | Area | State |
 |---|---|
@@ -172,7 +172,7 @@ Eclipse OS is in active development ahead of its first public release.
 | Per-machine profiles | Working |
 | Local AI, API and search by meaning | Working |
 | Snapshots, backup and cloning | Working |
-| eclipse-flash for Windows, macOS and Linux | Working |
+| rift-flash for Windows, macOS and Linux | Working |
 | Sandboxing, network switch and Flatpak with portals | Working |
 | Distribution branding and text boot | In progress |
 | Top bar, application menu, dock, system menu and notifications | Planned |
@@ -183,10 +183,10 @@ Eclipse OS is in active development ahead of its first public release.
 
 ## Reporting problems
 
-Bugs and feature requests are tracked in [GitHub issues](https://github.com/officialthomasguthrie/Eclipse/issues). Reports of how Eclipse OS runs on specific hardware are especially useful; the form for them is [`hw/TEMPLATE.md`](hw/TEMPLATE.md).
+Bugs and feature requests are tracked in [GitHub issues](https://github.com/officialthomasguthrie/Rift/issues). Reports of how Rift runs on specific hardware are especially useful; the form for them is [`hw/TEMPLATE.md`](hw/TEMPLATE.md).
 
 ## License
 
-Eclipse OS is licensed under the [GNU General Public License, version 3 or later](LICENSE). libeclipse is licensed under the [Apache License 2.0](LICENSE-APACHE) so that other software can use it. Umbra is derived from [niri](https://github.com/niri-wm/niri) by Ivan Molodetskikh and the niri contributors. Third-party software included in the image remains under its own license.
+Rift is licensed under the [GNU General Public License, version 3 or later](LICENSE). librift is licensed under the [Apache License 2.0](LICENSE-APACHE) so that other software can use it. Umbra is derived from [niri](https://github.com/niri-wm/niri) by Ivan Molodetskikh and the niri contributors. Third-party software included in the image remains under its own license.
 
 Copyright 2026 Thomas Guthrie.

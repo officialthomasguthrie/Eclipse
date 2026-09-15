@@ -26,20 +26,20 @@ jobs:
       # the umbra crates need the compositor's system libraries, the nix job builds those
       - run: cargo clippy --workspace --exclude umbra --exclude niri-config --exclude niri-ipc --all-targets -- -D warnings
       - run: cargo test --workspace --exclude umbra --exclude niri-config --exclude niri-ipc
-      - run: cargo build --release -p eclipse-flash --bin eclipse-flash -p eclipse-flash-app --bin eclipse-flash-app
-      - name: Take a picture of the eclipse-flash app
+      - run: cargo build --release -p rift-flash --bin rift-flash -p rift-flash-app --bin rift-flash-app
+      - name: Take a picture of the rift-flash app
         # under a virtual X display. the runner has no stick, so the app lists none, and quits
         run: |
           sudo apt-get install -y --no-install-recommends xvfb libxkbcommon-x11-0 libxcursor1 libxrandr2 libxi6 >/dev/null
-          timeout 120 xvfb-run -a -s '-screen 0 1280x1024x24' target/release/eclipse-flash-app --screenshot flash-app-linux.png
+          timeout 120 xvfb-run -a -s '-screen 0 1280x1024x24' target/release/rift-flash-app --screenshot flash-app-linux.png
           test -s flash-app-linux.png
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: eclipse-flash-linux-${{ github.sha }}
+          name: rift-flash-linux-${{ github.sha }}
           path: |
-            target/release/eclipse-flash
-            target/release/eclipse-flash-app
+            target/release/rift-flash
+            target/release/rift-flash-app
           retention-days: 14
       - uses: actions/upload-artifact@v4
         continue-on-error: true
@@ -49,10 +49,10 @@ jobs:
           retention-days: 14
 
   flash-macos:
-    # eclipse-flash on a mac: clippy and the tests, then the runner's own disks refused, and a drive
+    # rift-flash on a mac: clippy and the tests, then the runner's own disks refused, and a drive
     # written onto a disk image hdiutil attaches as a disk, the way a stick is written, and into a file.
     # the app is built, takes a picture of itself, and its own code writes a drive through the prompt
-    name: eclipse-flash on macOS
+    name: rift-flash on macOS
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,17 +60,17 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy -p libeclipse --features disk --all-targets -- -D warnings
-      - run: cargo clippy -p eclipse-flash --all-targets -- -D warnings
-      - run: cargo clippy -p eclipse-flash-app --all-targets -- -D warnings
-      - run: cargo test -p libeclipse --features disk
-      - run: cargo test -p eclipse-flash
-      - run: cargo test -p eclipse-flash-app
-      - run: cargo build --release -p eclipse-flash --bin eclipse-flash --example test-drive
-      - run: cargo build --release -p eclipse-flash-app --bin eclipse-flash-app --example elevated
+      - run: cargo clippy -p librift --features disk --all-targets -- -D warnings
+      - run: cargo clippy -p rift-flash --all-targets -- -D warnings
+      - run: cargo clippy -p rift-flash-app --all-targets -- -D warnings
+      - run: cargo test -p librift --features disk
+      - run: cargo test -p rift-flash
+      - run: cargo test -p rift-flash-app
+      - run: cargo build --release -p rift-flash --bin rift-flash --example test-drive
+      - run: cargo build --release -p rift-flash-app --bin rift-flash-app --example elevated
       - name: Write a drive onto a disk image
         run: |
-          flash=target/release/eclipse-flash
+          flash=target/release/rift-flash
           sample=target/release/examples/test-drive
           "$sample" image sample.raw.zst
           refused() {
@@ -78,12 +78,12 @@ jobs:
             shift 2
             if out=$("$@" 2>&1); then
               echo "$out"
-              echo "::error::eclipse-flash wrote onto $what"
+              echo "::error::rift-flash wrote onto $what"
               exit 1
             fi
             echo "$what: $out"
             if ! grep -qE -- "$words" <<<"$out"; then
-              echo "::error::eclipse-flash did not refuse $what with: $words"
+              echo "::error::rift-flash did not refuse $what with: $words"
               exit 1
             fi
           }
@@ -96,7 +96,7 @@ jobs:
             if grep -qF "is the drive this system runs from." <<<"$out"; then running=1; fi
           done
           if [ "$running" != 1 ]; then
-            echo "::error::eclipse-flash did not find the disk macOS runs from"
+            echo "::error::rift-flash did not find the disk macOS runs from"
             exit 1
           fi
           # a raw file of 24G attached as a disk, with nothing mounted from it
@@ -105,12 +105,12 @@ jobs:
           "$flash" list | tee list.txt
           grep -qF "$image, Disk Image, 24.0 GiB." list.txt
           # the app with the disk image listed and selected, in a picture. macos has no timeout command
-          perl -e 'alarm 120; exec @ARGV' target/release/eclipse-flash-app --screenshot flash-app-macos.png sample.raw.zst
+          perl -e 'alarm 120; exec @ARGV' target/release/rift-flash-app --screenshot flash-app-macos.png sample.raw.zst
           test -s flash-app-macos.png
           refused "a wrong name" "is not the name of $image\. Nothing was written\." \
             sudo "$flash" write --serial disk99 sample.raw.zst "$image"
           sudo "$flash" write --exchange 64M --serial "${image#/dev/}" sample.raw.zst "$image"
-          # eclipse-flash ejects the disk it wrote, and the file behind it holds the drive
+          # rift-flash ejects the disk it wrote, and the file behind it holds the drive
           if diskutil info "$image" >/dev/null 2>&1; then
             echo "::error::$image is still attached"
             exit 1
@@ -126,23 +126,23 @@ jobs:
           refused "a file written once" "is not empty" sudo "$flash" write sample.raw.zst file.img
           rm drive.img file.img
       - name: Write a drive the way the app does
-        # the app's own code starts eclipse-flash write through the administrator prompt. it runs as
+        # the app's own code starts rift-flash write through the administrator prompt. it runs as
         # root here, where the prompt asks nothing
         timeout-minutes: 10
         run: |
           mkfile -n 24g elevated.img
           image=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount elevated.img | awk 'NR == 1 { print $1 }')
-          sudo target/release/examples/elevated "$PWD/target/release/eclipse-flash" "$PWD/sample.raw.zst" "$image" "${image#/dev/}" | tee elevated.txt
-          grep -qF "$image is an Eclipse drive now" elevated.txt
+          sudo target/release/examples/elevated "$PWD/target/release/rift-flash" "$PWD/sample.raw.zst" "$image" "${image#/dev/}" | tee elevated.txt
+          grep -qF "$image is a Rift drive now" elevated.txt
           target/release/examples/test-drive check elevated.img
           rm elevated.img
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: eclipse-flash-macos-${{ github.sha }}
+          name: rift-flash-macos-${{ github.sha }}
           path: |
-            target/release/eclipse-flash
-            target/release/eclipse-flash-app
+            target/release/rift-flash
+            target/release/rift-flash-app
           retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
@@ -154,10 +154,10 @@ jobs:
           retention-days: 14
 
   flash-windows:
-    # eclipse-flash on windows: clippy and the tests, then the runner's own disks refused, and a drive
+    # rift-flash on windows: clippy and the tests, then the runner's own disks refused, and a drive
     # written onto a VHDX diskpart attaches as a disk, the way a stick is written. the app is built,
     # takes a picture of itself, and its own code writes a drive through Start-Process -Verb RunAs
-    name: eclipse-flash on Windows
+    name: rift-flash on Windows
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -165,29 +165,29 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy -p libeclipse --features disk --all-targets -- -D warnings
-      - run: cargo clippy -p eclipse-flash --all-targets -- -D warnings
-      - run: cargo clippy -p eclipse-flash-app --all-targets -- -D warnings
-      - run: cargo test -p libeclipse --features disk
-      - run: cargo test -p eclipse-flash
-      - run: cargo test -p eclipse-flash-app
-      - run: cargo build --release -p eclipse-flash --bin eclipse-flash --example test-drive
-      - run: cargo build --release -p eclipse-flash-app --bin eclipse-flash-app --example elevated
+      - run: cargo clippy -p librift --features disk --all-targets -- -D warnings
+      - run: cargo clippy -p rift-flash --all-targets -- -D warnings
+      - run: cargo clippy -p rift-flash-app --all-targets -- -D warnings
+      - run: cargo test -p librift --features disk
+      - run: cargo test -p rift-flash
+      - run: cargo test -p rift-flash-app
+      - run: cargo build --release -p rift-flash --bin rift-flash --example test-drive
+      - run: cargo build --release -p rift-flash-app --bin rift-flash-app --example elevated
       - name: Write a drive onto a virtual disk
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $flash = 'target\release\eclipse-flash.exe'
+          $flash = 'target\release\rift-flash.exe'
           $sample = 'target\release\examples\test-drive.exe'
           function Refused($what, $words, [string[]]$arguments) {
             $out = & $flash @arguments 2>&1 | Out-String
             if ($LASTEXITCODE -eq 0) {
               Write-Host $out
-              throw "eclipse-flash wrote onto $what"
+              throw "rift-flash wrote onto $what"
             }
             Write-Host "${what}: $out"
             if ($out -notmatch $words) {
-              throw "eclipse-flash did not refuse $what with: $words"
+              throw "rift-flash did not refuse $what with: $words"
             }
             return $out
           }
@@ -200,7 +200,7 @@ jobs:
             $out = Refused $name 'is the drive this system runs from\.|is neither removable nor on USB\.' @('write', '--serial', "PhysicalDrive$($disk.Number)", 'sample.raw.zst', $name)
             if ($out -match 'runs from') { $running = $true }
           }
-          if (-not $running) { throw 'eclipse-flash did not find the disk Windows runs from' }
+          if (-not $running) { throw 'rift-flash did not find the disk Windows runs from' }
           # a VHDX of 24G attached as a disk, with no partitions on it
           $vhd = Join-Path $env:RUNNER_TEMP 'drive.vhdx'
           "create vdisk file=`"$vhd`" maximum=24576 type=expandable`nselect vdisk file=`"$vhd`"`nattach vdisk" | Set-Content attach.txt
@@ -211,22 +211,22 @@ jobs:
           $name = "\\.\PhysicalDrive$number"
           $list = & $flash list | Out-String
           Write-Output $list
-          if (-not $list.Contains("$name, Msft Virtual Disk, 24.0 GiB.")) { throw "eclipse-flash list does not show $name" }
+          if (-not $list.Contains("$name, Msft Virtual Disk, 24.0 GiB.")) { throw "rift-flash list does not show $name" }
           # the app with the virtual disk listed and selected, in a picture. it has no console, so it is
           # waited for
-          $app = Start-Process -FilePath 'target\release\eclipse-flash-app.exe' -ArgumentList '--screenshot', 'flash-app-windows.png', 'sample.raw.zst' -PassThru
+          $app = Start-Process -FilePath 'target\release\rift-flash-app.exe' -ArgumentList '--screenshot', 'flash-app-windows.png', 'sample.raw.zst' -PassThru
           if (-not $app.WaitForExit(120000)) { $app.Kill(); throw 'the app did not quit after its picture' }
           if (-not (Test-Path 'flash-app-windows.png')) { throw "the app took no picture and ended with $($app.ExitCode)" }
           Refused 'a wrong name' 'is not the name of' @('write', '--serial', 'PhysicalDrive99', 'sample.raw.zst', $name)
           & $flash write --exchange 64M --serial "PhysicalDrive$number" sample.raw.zst $name
-          if ($LASTEXITCODE -ne 0) { throw "eclipse-flash did not write $name" }
+          if ($LASTEXITCODE -ne 0) { throw "rift-flash did not write $name" }
           & $sample check $name
           if ($LASTEXITCODE -ne 0) { throw "$name does not hold the drive" }
           Get-Partition -DiskNumber $number | Format-Table -AutoSize
           "select vdisk file=`"$vhd`"`ndetach vdisk" | Set-Content detach.txt
           diskpart /s detach.txt
       - name: Write a drive the way the app does
-        # the app's own code starts eclipse-flash write through Start-Process -Verb RunAs. the runner's
+        # the app's own code starts rift-flash write through Start-Process -Verb RunAs. the runner's
         # account is an administrator that is not asked
         timeout-minutes: 10
         shell: pwsh
@@ -239,13 +239,13 @@ jobs:
           Start-Sleep -Seconds 5
           $number = (Get-Disk | Where-Object { [string]$_.BusType -eq 'File Backed Virtual' }).Number
           $name = "\\.\PhysicalDrive$number"
-          $flash = (Resolve-Path 'target\release\eclipse-flash.exe').Path
+          $flash = (Resolve-Path 'target\release\rift-flash.exe').Path
           $image = (Resolve-Path 'sample.raw.zst').Path
           $out = & 'target\release\examples\elevated.exe' $flash $image $name "PhysicalDrive$number" | Out-String
           $code = $LASTEXITCODE
           Write-Host $out
           if ($code -ne 0) { throw "the write the app starts ended with $code" }
-          if (-not $out.Contains("$name is an Eclipse drive now")) { throw 'eclipse-flash did not say the drive is written' }
+          if (-not $out.Contains("$name is a Rift drive now")) { throw 'rift-flash did not say the drive is written' }
           & 'target\release\examples\test-drive.exe' check $name
           if ($LASTEXITCODE -ne 0) { throw "$name does not hold the drive" }
           "select vdisk file=`"$vhd`"`ndetach vdisk" | Set-Content detach.txt
@@ -253,10 +253,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: eclipse-flash-windows-${{ github.sha }}
+          name: rift-flash-windows-${{ github.sha }}
           path: |
-            target/release/eclipse-flash.exe
-            target/release/eclipse-flash-app.exe
+            target/release/rift-flash.exe
+            target/release/rift-flash-app.exe
           retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
@@ -348,7 +348,7 @@ jobs:
       - name: Diagnose
         if: failure() && steps.build.outputs.failed == '1'
         run: |
-          drv=$(nix eval --raw .#nixosConfigurations.eclipse.config.system.build.intermediateImage.drvPath)
+          drv=$(nix eval --raw .#nixosConfigurations.rift.config.system.build.intermediateImage.drvPath)
           echo "::group::nix log of $drv"
           nix log "$drv" | tail -n 80 || true
           echo "::endgroup::"
@@ -361,8 +361,8 @@ jobs:
         run: |
           sudo apt-get install -y zstd >/dev/null
           img=$(ls result/*.raw | head -n1)
-          zstd -T0 -12 "$img" -o eclipse.raw.zst
-          ls -la result/ eclipse.raw.zst
+          zstd -T0 -12 "$img" -o rift.raw.zst
+          ls -la result/ rift.raw.zst
           # the update files are compressed already. out of the store, where they are read only, one
           # directory for each version
           mkdir updates
@@ -377,7 +377,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts" --paginate \
-            --jq '.artifacts[] | select(.expired == false) | select(.name | startswith("eclipse-image-")) | "\(.created_at) \(.id)"' \
+            --jq '.artifacts[] | select(.expired == false) | select(.name | startswith("rift-image-")) | "\(.created_at) \(.id)"' \
             | while read -r created id; do
             echo "dropping artifact $id from $created"
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" || true
@@ -388,7 +388,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            eclipse.raw.zst
+            rift.raw.zst
             updates
           key: image-${{ github.sha }}
       - uses: actions/upload-artifact@v4
@@ -396,12 +396,12 @@ jobs:
         # is not a failure
         continue-on-error: true
         with:
-          name: eclipse-image-${{ github.sha }}
-          path: eclipse.raw.zst
+          name: rift-image-${{ github.sha }}
+          path: rift.raw.zst
           retention-days: 14
 
   boot:
-    # the image runs here through the flake's vm app: eclipse-flash writes it onto a drive in a file,
+    # the image runs here through the flake's vm app: rift-flash writes it onto a drive in a file,
     # qemu boots that with kvm, everything over serial
     name: Boot test
     runs-on: ubuntu-latest
@@ -419,15 +419,15 @@ jobs:
         with:
           # the same paths the image job saved, or the cache is not found
           path: |
-            eclipse.raw.zst
+            rift.raw.zst
             updates
           key: image-${{ github.sha }}
           fail-on-cache-miss: true
       - uses: DeterminateSystems/determinate-nix-action@v3
-      - name: Build the vm app, eclipse-flash and the test's flatpak
+      - name: Build the vm app, rift-flash and the test's flatpak
         run: |
           nix build .#vm -o vm -L
-          nix build .#eclipse-flash -o flash -L
+          nix build .#rift-flash -o flash -L
           nix build .#test-flatpak -o test-flatpak -L
       - name: Install pexpect
         run: |
@@ -470,25 +470,25 @@ jobs:
           while read -r sha256 file url; do
             echo "$sha256  models/cache/$file"
           done < models/test-models.txt | sha256sum -c
-      - name: Check what eclipse-flash refuses
+      - name: Check what rift-flash refuses
         # it runs as root here, and every disk of the runner is inside it. a loop device, each of the
         # runner's disks, a file that holds something and a file that is too small are refused, and
         # nothing is written to any of them. the image is read and checked each time
         run: |
           refused() {
             what=$1 words=$2 target=$3
-            if out=$(printf 'eclipse-test\n' | sudo flash/bin/eclipse-flash write eclipse.raw.zst "$target" 2>&1); then
+            if out=$(printf 'rift-test\n' | sudo flash/bin/rift-flash write rift.raw.zst "$target" 2>&1); then
               echo "$out"
-              echo "::error::eclipse-flash wrote onto $what"
+              echo "::error::rift-flash wrote onto $what"
               exit 1
             fi
             echo "$what: $out"
             if ! grep -qE -- "$words" <<<"$out"; then
-              echo "::error::eclipse-flash did not refuse $what with: $words"
+              echo "::error::rift-flash did not refuse $what with: $words"
               exit 1
             fi
           }
-          flash/bin/eclipse-flash list
+          flash/bin/rift-flash list
           truncate -s 32G loop.img
           loop=$(sudo losetup --find --show loop.img)
           refused "a loop device" "is not a whole disk\." "$loop"
@@ -505,14 +505,14 @@ jobs:
             fi
           done
           if [ "$running" != 1 ]; then
-            echo "::error::eclipse-flash did not find the disk the runner runs from"
+            echo "::error::rift-flash did not find the disk the runner runs from"
             exit 1
           fi
           printf 'something' > used.img
           truncate -s 32G used.img
-          refused "a file that holds something" "is not empty, and eclipse-flash only writes into an empty file\." used.img
+          refused "a file that holds something" "is not empty, and rift-flash only writes into an empty file\." used.img
           truncate -s 8G small.img
-          refused "a file that is too small" "holds 8\.0 GiB, and Eclipse needs 21\.1 GiB\." small.img
+          refused "a file that is too small" "holds 8\.0 GiB, and Rift needs 21\.1 GiB\." small.img
           rm loop.img used.img small.img
       - name: Boot
         run: |
@@ -528,17 +528,17 @@ jobs:
           # more than 80G free. the first drive has an exchange partition, so the clone gets one too
           truncate -s 26G clone.img
           df -h .
-          printf 'eclipse-test' > pass.txt
-          # the vm app writes the image onto a drive in a file with eclipse-flash and boots that
-          python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw.zst pass.txt --models models/cache \
+          printf 'rift-test' > pass.txt
+          # the vm app writes the image onto a drive in a file with rift-flash and boots that
+          python3 tools/boot-test.py vm/bin/rift-vm rift.raw.zst pass.txt --models models/cache \
             --exchange 1G --log serial.log --splash splash.png --desktop desktop.png --corona \
             --updates updates.img --backup backup.img --clone clone.img --flatpak test-flatpak --timeout 1500
       - name: Boot a drive that makes persist at its first boot
-        # eclipse-flash leaves persist out, the way it writes a drive on macos and windows. the drive
+        # rift-flash leaves persist out, the way it writes a drive on macos and windows. the drive
         # asks for a passphrase over serial, makes persist and formats its exchange partition, and the
         # next boot opens that persist with the same passphrase
         run: |
-          python3 tools/boot-test.py vm/bin/eclipse-vm eclipse.raw.zst pass.txt --first-boot --exchange 1G \
+          python3 tools/boot-test.py vm/bin/rift-vm rift.raw.zst pass.txt --first-boot --exchange 1G \
             --log first-boot.log --splash first-boot-splash.png --timeout 900
       - uses: actions/upload-artifact@v4
         if: always()

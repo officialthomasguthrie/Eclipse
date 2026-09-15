@@ -14,7 +14,7 @@
     overrideStrategy = "asDropin";
     serviceConfig.ExecStart = [
       ""
-      "${pkgs.util-linux}/bin/agetty --login-program ${config.services.getty.loginProgram} --issue-file /etc/issue:/etc/issue.d:/run/issue:/run/issue.d --autologin eclipse %I --keep-baud $TERM"
+      "${pkgs.util-linux}/bin/agetty --login-program ${config.services.getty.loginProgram} --issue-file /etc/issue:/etc/issue.d:/run/issue:/run/issue.d --autologin rift %I --keep-baud $TERM"
     ];
   };
 
@@ -48,17 +48,17 @@
     MaxLevelConsole = "info";
   };
 
-  eclipse.totality.enable = true;
-  eclipse.syzygy.enable = true;
+  rift.totality.enable = true;
+  rift.syzygy.enable = true;
   # aurad picks the model for the tier. the boot test copies only the test model into @models,
   # so that is what runs there
-  eclipse.aura.enable = true;
-  eclipse.umbra.enable = true;
-  eclipse.corona.enable = true;
-  # bwrap for eclipse run --sandbox, and flatpak with its portals
-  eclipse.penumbra.enable = true;
-  eclipse.penumbra.flatpak.enable = true;
-  eclipse.vault.enable = true;
+  rift.aura.enable = true;
+  rift.umbra.enable = true;
+  rift.corona.enable = true;
+  # bwrap for rift run --sandbox, and flatpak with its portals
+  rift.penumbra.enable = true;
+  rift.penumbra.flatpak.enable = true;
+  rift.vault.enable = true;
 
-  environment.etc."eclipse/phase".text = "0\n";
+  environment.etc."rift/phase".text = "0\n";
 }

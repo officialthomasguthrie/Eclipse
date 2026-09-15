@@ -10,8 +10,8 @@ use iced::{
 use iced_layershell::actions::{LayerShellCustomAction, LayerShellCustomActionWithId};
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings};
-use libeclipse::aura;
-use libeclipse::os::{self, Action};
+use librift::aura;
+use librift::os::{self, Action};
 
 use crate::answer;
 use crate::control::{self, Command};
@@ -127,10 +127,10 @@ impl TryFrom<Message> for LayerShellCustomActionWithId {
 /// When there is no display or the compositor has no layer-shell.
 pub fn run(apps: Vec<App>) -> Result<(), iced_layershell::Error> {
     iced_layershell::application(move || boot(apps.clone()), "corona", update, view)
-        .theme(|_: &Corona| Theme::custom("Eclipse", PALETTE))
+        .theme(|_: &Corona| Theme::custom("Rift", PALETTE))
         .subscription(subscription)
         .settings(Settings {
-            id: Some("dev.eclipse.Corona".into()),
+            id: Some("dev.rift.Corona".into()),
             default_font: FONT,
             default_text_size: TEXT_SIZE.into(),
             layer_settings: LayerShellSettings {

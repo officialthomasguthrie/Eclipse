@@ -1,6 +1,6 @@
 # aura: local ai. aurad picks a chat model from the manifest for the tier syzygy reports, runs
 # llama-server (vulkan + cpu) as its child on a unix socket only aura's user can open, serves the
-# local api on 127.0.0.1 in front of it and answers on the system bus as dev.eclipse.Aura. a second
+# local api on 127.0.0.1 in front of it and answers on the system bus as dev.rift.Aura. a second
 # llama-server runs the embedding model for search by meaning, and the owner's own timer keeps an
 # index of home with it. whisper and piper come later.
 {
@@ -11,8 +11,8 @@
   ...
 }:
 let
-  cfg = config.eclipse.aura;
-  busName = "dev.eclipse.Aura";
+  cfg = config.rift.aura;
+  busName = "dev.rift.Aura";
   # the embedding model aurad runs for search by meaning. the index waits for its file
   embedding = builtins.head (lib.importTOML ../../models/manifest.toml).embedding;
   # anyone on the machine may ask and read the properties. only aura's own user owns the name
@@ -37,7 +37,7 @@ let
   };
 in
 {
-  options.eclipse.aura = {
+  options.rift.aura = {
     enable = lib.mkEnableOption "Aura, the local AI service";
 
     daemon = lib.mkOption {
@@ -54,7 +54,7 @@ in
 
     modelsDir = lib.mkOption {
       type = lib.types.str;
-      default = "/var/lib/eclipse/models";
+      default = "/var/lib/rift/models";
       description = "Where the GGUF weights live (the @models subvolume on persist).";
     };
 
@@ -79,7 +79,7 @@ in
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ cfg.package ];
     # the one list of models. aurad reads it here
-    environment.etc."eclipse/models.toml".source = ../../models/manifest.toml;
+    environment.etc."rift/models.toml".source = ../../models/manifest.toml;
     services.dbus.packages = [ policy ];
 
     users.users.aura = {
@@ -107,7 +107,7 @@ in
         ExecStart = lib.concatStringsSep " " (
           [
             "${cfg.daemon}/bin/aurad"
-            "--manifest /etc/eclipse/models.toml"
+            "--manifest /etc/rift/models.toml"
             "--models-dir ${cfg.modelsDir}"
             "--llama-server ${cfg.package}/bin/llama-server"
             "--port ${toString cfg.port}"
@@ -141,14 +141,14 @@ in
     };
 
     # search by meaning. the owner's user manager keeps the index of home in the owner's cache:
-    # eclipse ai index reads the files and aura only turns their text into vectors. the first run
+    # rift ai index reads the files and aura only turns their text into vectors. the first run
     # waits until the session has settled, then one runs 15 minutes after the last ended
     systemd.user.services.aura-index = {
       description = "Aura, the search index of home";
       unitConfig.ConditionPathExists = "${cfg.modelsDir}/${embedding.file}";
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = "${cfg.daemon}/bin/eclipse ai index";
+        ExecStart = "${cfg.daemon}/bin/rift ai index";
         Nice = 19;
         IOSchedulingClass = "idle";
       };

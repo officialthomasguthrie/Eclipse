@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn the_group_comes_from_the_password_file() {
         let passwd = "root:x:0:0:System administrator:/root:/bin/sh\n\
-            eclipse:x:1000:100:Eclipse owner:/home/eclipse:/bin/fish\n\
+            rift:x:1000:100:Rift owner:/home/rift:/bin/fish\n\
             broken:x:1001\n";
         assert_eq!(group_of(passwd, 1000), Some(100));
         assert_eq!(group_of(passwd, 0), Some(0));
@@ -364,17 +364,17 @@ mod tests {
     fn only_plain_paths_inside_home_are_taken() {
         let home = Path::new("/home");
         assert_eq!(
-            under_home(home, Path::new("/home/eclipse/notes.txt")),
-            Some(PathBuf::from("eclipse/notes.txt"))
+            under_home(home, Path::new("/home/rift/notes.txt")),
+            Some(PathBuf::from("rift/notes.txt"))
         );
         for path in [
             "/home",
             "/home/",
             "/etc/shadow",
             "/homework/notes.txt",
-            "home/eclipse/notes.txt",
-            "/home/eclipse/../../etc/shadow",
-            "/home/eclipse/./notes.txt",
+            "home/rift/notes.txt",
+            "/home/rift/../../etc/shadow",
+            "/home/rift/./notes.txt",
             "/home/../etc/shadow",
         ] {
             assert_eq!(under_home(home, Path::new(path)), None, "{path}");
@@ -384,10 +384,10 @@ mod tests {
             );
         }
         assert_eq!(
-            inside(home, "/home/eclipse/notes.txt"),
+            inside(home, "/home/rift/notes.txt"),
             Ok((
-                PathBuf::from("eclipse/notes.txt"),
-                PathBuf::from("/home/eclipse/notes.txt")
+                PathBuf::from("rift/notes.txt"),
+                PathBuf::from("/home/rift/notes.txt")
             ))
         );
     }

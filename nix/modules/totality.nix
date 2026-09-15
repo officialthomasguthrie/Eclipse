@@ -7,7 +7,7 @@
   ...
 }:
 let
-  cfg = config.eclipse.totality;
+  cfg = config.rift.totality;
   theme = pkgs.stdenvNoCC.mkDerivation {
     pname = "plymouth-theme-totality";
     version = "0.1.0";
@@ -22,7 +22,7 @@ let
   };
 in
 {
-  options.eclipse.totality.enable = lib.mkEnableOption "the Totality boot splash";
+  options.rift.totality.enable = lib.mkEnableOption "the Totality boot splash";
 
   config = lib.mkIf cfg.enable {
     boot.plymouth = {

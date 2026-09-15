@@ -8,12 +8,12 @@
   ...
 }:
 let
-  cfg = config.eclipse.umbra;
+  cfg = config.rift.umbra;
   umbra = self.packages.${pkgs.stdenv.hostPlatform.system}.umbra;
   # the console: a terminal that drops down from the top of the screen over whatever is open. the
   # bind shows or hides the window with this app id, and starts ghostty with it when there is none
   console = {
-    appId = "dev.eclipse.Console";
+    appId = "dev.rift.Console";
     height = 400;
   };
   # the session greetd runs. greetd drops the session's own output, systemd-cat puts umbra's log
@@ -27,11 +27,11 @@ let
     "${self.packages.${pkgs.stdenv.hostPlatform.system}.workspace}/bin/umbra-lock"
   ];
   # ghostty's settings, written into the owner's home once, when there is no file yet. tmpfiles
-  # turns the \n into new lines
+  # turns the \n into new lines. the background is the near black the logo was drawn on
   ghosttySettings = lib.concatStringsSep "\\n" [
     "font-family = DejaVu Sans Mono"
     "font-size = 11"
-    "background = #282828"
+    "background = #040406"
     "foreground = #d4d4d4"
     "window-theme = dark"
   ];
@@ -145,11 +145,11 @@ let
   '';
 in
 {
-  options.eclipse.umbra = {
-    enable = lib.mkEnableOption "Umbra, the Eclipse compositor";
+  options.rift.umbra = {
+    enable = lib.mkEnableOption "Umbra, the Rift compositor";
     user = lib.mkOption {
       type = lib.types.str;
-      default = "eclipse";
+      default = "rift";
       description = "the account the session runs as";
     };
     background = lib.mkOption {
@@ -183,7 +183,7 @@ in
     };
     # the lock screen. Mod+L runs it, and the listener runs it when logind signals the session,
     # which is what loginctl lock-session does. pam checks the owner's password
-    eclipse.umbra.startup = [
+    rift.umbra.startup = [
       (lock ++ [ "--listen" ])
       # graphical-session.target, which user services of a graphical session need, xdg-desktop-portal
       # among them. umbra runs in greetd's session and not as a unit of its own that would bind it

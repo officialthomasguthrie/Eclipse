@@ -15,7 +15,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use libeclipse::disk::run::tool;
+use librift::disk::run::tool;
 use serde::{Deserialize, Serialize};
 
 use crate::restore::{self, Account, Outcome, Problem, Source};
@@ -346,7 +346,7 @@ pub struct Backups {
     pub subvolume: PathBuf,
     /// Where the snapshot a backup reads is taken, `/persist/@snapshots/backup`.
     pub snapshots: PathBuf,
-    /// The target and the password, `/var/lib/eclipse/vault`.
+    /// The target and the password, `/var/lib/rift/vault`.
     pub state: PathBuf,
     /// Where a restore puts the file before it is copied into home, `/var/cache/vault`.
     pub cache: PathBuf,
@@ -674,7 +674,7 @@ mod tests {
     fn a_target_reads_back_what_it_writes() {
         let target = Target {
             disk: "5f0e1c7a-8d2b-4c1e-9a3f-6b7d8e9f0a1b".into(),
-            folder: "/Eclipse backups".into(),
+            folder: "/Rift backups".into(),
         };
         let text = target.text().unwrap();
         assert!(text.starts_with("# where vault backs up home"), "{text}");
@@ -685,10 +685,10 @@ mod tests {
     #[test]
     fn a_target_with_a_strange_disk_or_folder_is_refused() {
         for text in [
-            "disk = \"../../sda\"\nfolder = \"/Eclipse\"\n",
-            "disk = \"\"\nfolder = \"/Eclipse\"\n",
-            "disk = \"----\"\nfolder = \"/Eclipse\"\n",
-            "disk = \"ABCD-1234\"\nfolder = \"Eclipse\"\n",
+            "disk = \"../../sda\"\nfolder = \"/Rift\"\n",
+            "disk = \"\"\nfolder = \"/Rift\"\n",
+            "disk = \"----\"\nfolder = \"/Rift\"\n",
+            "disk = \"ABCD-1234\"\nfolder = \"Rift\"\n",
             "disk = \"ABCD-1234\"\nfolder = \"/a/../../b\"\n",
             "disk = \"ABCD-1234\"\n",
         ] {
@@ -700,7 +700,7 @@ mod tests {
     fn findmnt_says_where_a_folder_is_on_its_disk() {
         let json = r#"{
            "filesystems": [
-              {"uuid": "5f0e1c7a-8d2b-4c1e-9a3f-6b7d8e9f0a1b", "fsroot": "/", "target": "/run/media/eclipse/Backup"}
+              {"uuid": "5f0e1c7a-8d2b-4c1e-9a3f-6b7d8e9f0a1b", "fsroot": "/", "target": "/run/media/rift/Backup"}
            ]
         }"#;
         let mount = read_findmnt(json).unwrap();
@@ -709,14 +709,14 @@ mod tests {
             Some("5f0e1c7a-8d2b-4c1e-9a3f-6b7d8e9f0a1b")
         );
         assert_eq!(
-            folder_on_disk(&mount, Path::new("/run/media/eclipse/Backup/Eclipse")).as_deref(),
-            Some("/Eclipse")
+            folder_on_disk(&mount, Path::new("/run/media/rift/Backup/Rift")).as_deref(),
+            Some("/Rift")
         );
         assert_eq!(
-            folder_on_disk(&mount, Path::new("/run/media/eclipse/Backup")).as_deref(),
+            folder_on_disk(&mount, Path::new("/run/media/rift/Backup")).as_deref(),
             Some("/")
         );
-        assert_eq!(folder_on_disk(&mount, Path::new("/home/eclipse")), None);
+        assert_eq!(folder_on_disk(&mount, Path::new("/home/rift")), None);
 
         // a btrfs subvolume, or a bind mount, starts further down its file system
         let subvolume = Mount {
@@ -725,8 +725,8 @@ mod tests {
             target: "/mnt".into(),
         };
         assert_eq!(
-            folder_on_disk(&subvolume, Path::new("/mnt/Eclipse")).as_deref(),
-            Some("/@backups/Eclipse")
+            folder_on_disk(&subvolume, Path::new("/mnt/Rift")).as_deref(),
+            Some("/@backups/Rift")
         );
 
         let tmpfs =
@@ -762,14 +762,14 @@ mod tests {
     #[test]
     fn rustic_gets_the_repository_the_password_and_nothing_from_the_environment() {
         let (repository, key) = (
-            Path::new("/run/vault/disk-1-0/Eclipse"),
-            Path::new("/var/lib/eclipse/vault/backup.key"),
+            Path::new("/run/vault/disk-1-0/Rift"),
+            Path::new("/var/lib/rift/vault/backup.key"),
         );
         let start = [
             "--repository",
-            "/run/vault/disk-1-0/Eclipse",
+            "/run/vault/disk-1-0/Rift",
             "--password-file",
-            "/var/lib/eclipse/vault/backup.key",
+            "/var/lib/rift/vault/backup.key",
             "--no-cache",
             "--no-progress",
             "--log-level",
@@ -804,18 +804,18 @@ mod tests {
                 repository,
                 key,
                 "e863e83c",
-                Path::new("eclipse/backup/letter.txt"),
+                Path::new("rift/backup/letter.txt"),
                 Path::new("/var/cache/vault/restore-1-2")
             ),
             with(&[
                 "restore",
                 "--numeric-id",
                 "--glob",
-                "/eclipse",
+                "/rift",
                 "--glob",
-                "/eclipse/backup",
+                "/rift/backup",
                 "--glob",
-                "/eclipse/backup/letter.txt",
+                "/rift/backup/letter.txt",
                 "e863e83c:/home",
                 "/var/cache/vault/restore-1-2"
             ])
@@ -825,16 +825,16 @@ mod tests {
     #[test]
     fn globs_match_names_with_glob_characters_literally() {
         assert_eq!(
-            globs(Path::new("eclipse/odd [1]/a*b?.txt")),
+            globs(Path::new("rift/odd [1]/a*b?.txt")),
             [
-                "/eclipse",
-                "/eclipse/odd\\ \\[1\\]",
-                "/eclipse/odd\\ \\[1\\]/a\\*b\\?.txt"
+                "/rift",
+                "/rift/odd\\ \\[1\\]",
+                "/rift/odd\\ \\[1\\]/a\\*b\\?.txt"
             ]
         );
         assert_eq!(
-            globs(Path::new("eclipse/{x,y}!")),
-            ["/eclipse", "/eclipse/\\{x,y\\}\\!"]
+            globs(Path::new("rift/{x,y}!")),
+            ["/rift", "/rift/\\{x,y\\}\\!"]
         );
     }
 
@@ -870,7 +870,7 @@ mod tests {
   "program_version": "rustic 0.11.4",
   "tree": "ff9d418a06a0b04453724a5debc6f88a5e2fd9a588881c2227df18515072407e",
   "paths": ["/home"],
-  "hostname": "eclipse",
+  "hostname": "rift",
   "summary": {"files_new": 3, "backup_duration": 0.024082},
   "id": "e863e83c77b4f162be953870ddaaf7ff70f92ab02e129fa01b3752e0495b489d"
 }"#;
@@ -891,7 +891,7 @@ mod tests {
     #[test]
     fn backups_are_listed_oldest_first_across_groups() {
         let json = r#"[
-  {"group_key": {"hostname": "eclipse", "label": "home", "paths": ["/home"]},
+  {"group_key": {"hostname": "rift", "label": "home", "paths": ["/home"]},
    "snapshots": [
      {"time": "2026-09-12T10:00:00+00:00", "id": "bbbbbbbb00", "paths": ["/home"]},
      {"time": "2026-09-12T08:00:00+00:00", "id": "aaaaaaaa00", "paths": ["/home"]}

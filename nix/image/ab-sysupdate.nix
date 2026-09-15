@@ -1,4 +1,4 @@
-# the running side of the a/b slots. default.nix lays out slot a, eclipse-flash adds slot b.
+# the running side of the a/b slots. default.nix lays out slot a, rift-flash adds slot b.
 #
 # systemd-boot takes a try off a uki's counter each time it starts it, and systemd-bless-boot drops
 # the counter once boot-complete.target is reached. a uki with no tries left sorts behind the others,
@@ -14,7 +14,7 @@ let
 
   # updates come from a directory on persist until there is a channel to download them from.
   # sysupdate still checks every file against SHA256SUMS and its signature
-  source = "file:///var/lib/eclipse/updates/";
+  source = "file:///var/lib/rift/updates/";
 
   partition = type: label: file: {
     Transfer.ProtectVersion = "%A";
@@ -40,7 +40,7 @@ let
 
   # a boot is good once syzygy has written the host profile and greetd has started the session
   checks =
-    lib.optional config.eclipse.syzygy.enable "syzygy.service"
+    lib.optional config.rift.syzygy.enable "syzygy.service"
     ++ lib.optional config.services.greetd.enable "greetd.service";
 in
 {

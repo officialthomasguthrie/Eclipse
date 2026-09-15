@@ -1,5 +1,5 @@
 {
-  description = "Eclipse OS";
+  description = "Rift";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -46,7 +46,7 @@
         };
 
         # the os. nix build .#image
-        nixosConfigurations.eclipse = nixpkgs.lib.nixosSystem {
+        nixosConfigurations.rift = nixpkgs.lib.nixosSystem {
           specialArgs = { inherit inputs self; };
           modules = [
             { nixpkgs.hostPlatform = "x86_64-linux"; }
@@ -80,12 +80,12 @@
           src = craneLib.cleanCargoSource ./.;
           # the compositor is built apart from the small crates: it pulls in smithay and a dozen
           # system libraries, and the rest of the workspace should stay cheap to build and check. the
-          # eclipse-flash app runs on other systems, not on the drive, and ci builds it on all three
-          firstParty = "--workspace --exclude umbra --exclude niri-config --exclude niri-ipc --exclude eclipse-flash-app";
+          # rift-flash app runs on other systems, not on the drive, and ci builds it on all three
+          firstParty = "--workspace --exclude umbra --exclude niri-config --exclude niri-ipc --exclude rift-flash-app";
           common = {
             inherit src;
             strictDeps = true;
-            pname = "eclipse";
+            pname = "rift";
             version = "0.1.0";
             cargoExtraArgs = firstParty;
             # corona's panel links the wayland client library and xkbcommon, the lock screen pam
@@ -105,23 +105,23 @@
               doCheck = false;
             }
           );
-          # eclipse-flash by itself, and on linux with the programs it runs. it needs none of the
+          # rift-flash by itself, and on linux with the programs it runs. it needs none of the
           # desktop's libraries, so the vm app gets it in minutes without the rest of the workspace
           flashCommon = {
             inherit src;
             strictDeps = true;
-            pname = "eclipse-flash";
+            pname = "rift-flash";
             version = "0.1.0";
-            cargoExtraArgs = "-p eclipse-flash";
+            cargoExtraArgs = "-p rift-flash";
           };
-          eclipseFlash = craneLib.buildPackage (
+          riftFlash = craneLib.buildPackage (
             flashCommon
             // {
               cargoArtifacts = craneLib.buildDepsOnly flashCommon;
               doCheck = false;
               nativeBuildInputs = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.makeWrapper ];
               postInstall = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-                wrapProgram $out/bin/eclipse-flash --prefix PATH : ${
+                wrapProgram $out/bin/rift-flash --prefix PATH : ${
                   lib.makeBinPath [
                     pkgs.util-linux
                     pkgs.cryptsetup
@@ -183,7 +183,7 @@
             }
           );
           isImageHost = system == "x86_64-linux";
-          os = self.nixosConfigurations.eclipse.config;
+          os = self.nixosConfigurations.rift.config;
           # the image's version with the minor version n on
           bump =
             n:
@@ -193,13 +193,13 @@
             lib.mkForce "${lib.versions.major v}.${toString (lib.toInt (lib.versions.minor v) + n)}.0";
           # the same system a minor version on. the boot test installs its update files into slot b
           # and reboots into it
-          next = self.nixosConfigurations.eclipse.extendModules {
+          next = self.nixosConfigurations.rift.extendModules {
             modules = [ { system.image.version = bump 1; } ];
           };
           # two minor versions on, with a boot check that always fails. it comes up to the shell but
           # never reaches boot-complete.target, so systemd-boot gives up on it after three boots and
           # the boot test sees the version before it start again
-          broken = self.nixosConfigurations.eclipse.extendModules {
+          broken = self.nixosConfigurations.rift.extendModules {
             modules = [
               (
                 { pkgs, ... }:
@@ -225,7 +225,7 @@
           packages = {
             default = workspace;
             inherit workspace;
-            eclipse-flash = eclipseFlash;
+            rift-flash = riftFlash;
           }
           // lib.optionalAttrs pkgs.stdenv.isLinux { inherit umbra; }
           // lib.optionalAttrs isImageHost {
@@ -236,23 +236,23 @@
             broken-update = import ./nix/image/update.nix { inherit (broken) config pkgs; };
             # the flatpak runtime and app the boot test installs, as bundles
             test-flatpak = import ./nix/test-flatpak.nix { inherit pkgs; };
-            # boots a drive in qemu. `nix run .#vm` hands it the image above, which eclipse-flash first
+            # boots a drive in qemu. `nix run .#vm` hands it the image above, which rift-flash first
             # writes onto a drive in a file the way it writes a stick; the boot test does the same with
             # the image from the image job. the drive is nvme, not an emulated usb stick: qemu's usb
             # storage returns bad blocks now and then and verity refuses them.
             vm = pkgs.writeShellApplication {
-              name = "eclipse-vm";
+              name = "rift-vm";
               runtimeInputs = [
                 pkgs.qemu_kvm
-                eclipseFlash
+                riftFlash
               ];
               text = ''
                 usage() {
-                  echo "usage: eclipse-vm --image file [--persist passfile | --first-boot] [--models dir] [--exchange size] [qemu options]" >&2
+                  echo "usage: rift-vm --image file [--persist passfile | --first-boot] [--models dir] [--exchange size] [qemu options]" >&2
                   echo "  --image       the drive to boot. with --persist or --first-boot, the image (.raw or .raw.zst) to write onto one" >&2
-                  echo "  --persist     write the image onto a drive in a file with eclipse-flash (sudo), with the" >&2
+                  echo "  --persist     write the image onto a drive in a file with rift-flash (sudo), with the" >&2
                   echo "                passphrase for persist in this file" >&2
-                  echo "  --first-boot  write the image onto a drive in a file with eclipse-flash (sudo) without persist," >&2
+                  echo "  --first-boot  write the image onto a drive in a file with rift-flash (sudo) without persist," >&2
                   echo "                which the drive makes when it first starts, with a passphrase typed there" >&2
                   echo "  --models      copy the files in this directory into the models subvolume (with --persist)" >&2
                   echo "  --exchange    give the drive an exchange partition of this size, like 1G (with --persist or --first-boot)" >&2
@@ -277,25 +277,25 @@
                   esac
                 done
                 [ -n "$image" ] || { usage; exit 1; }
-                [ -f "$image" ] || { echo "eclipse-vm: no such image: $image" >&2; exit 1; }
+                [ -f "$image" ] || { echo "rift-vm: no such image: $image" >&2; exit 1; }
                 if [ -n "$persist" ] && [ -n "$firstboot" ]; then
-                  echo "eclipse-vm: --persist and --first-boot do not go together" >&2
+                  echo "rift-vm: --persist and --first-boot do not go together" >&2
                   exit 1
                 fi
                 if [ -n "$models" ] && [ -z "$persist" ]; then
-                  echo "eclipse-vm: --models goes with --persist" >&2
+                  echo "rift-vm: --models goes with --persist" >&2
                   exit 1
                 fi
                 if [ -n "$exchange" ] && [ -z "$persist$firstboot" ]; then
-                  echo "eclipse-vm: --exchange goes with --persist or --first-boot" >&2
+                  echo "rift-vm: --exchange goes with --persist or --first-boot" >&2
                   exit 1
                 fi
                 if [ -n "$models" ] && [ ! -d "$models" ]; then
-                  echo "eclipse-vm: no such directory: $models" >&2
+                  echo "rift-vm: no such directory: $models" >&2
                   exit 1
                 fi
 
-                work=$(mktemp -d -t eclipse-vm.XXXXXX)
+                work=$(mktemp -d -t rift-vm.XXXXXX)
                 qemu=""
                 # qemu runs as a child so the drive goes away when it ends or when we are killed
                 cleanup() {
@@ -308,22 +308,22 @@
                 trap cleanup EXIT
                 trap 'exit 1' HUP INT TERM
                 if [ -n "$persist$firstboot" ]; then
-                  # a sparse file the size of a small stick. eclipse-flash reads the image where it
+                  # a sparse file the size of a small stick. rift-flash reads the image where it
                   # is, so one in the store needs no copy
                   flash=(write)
                   if [ -n "$firstboot" ]; then flash+=(--first-boot); fi
                   if [ -n "$models" ]; then flash+=(--models "$models"); fi
                   if [ -n "$exchange" ]; then flash+=(--exchange "$exchange"); fi
                   truncate -s 24G "$work/drive.img"
-                  echo "eclipse-vm: writing $image onto a drive in $work with eclipse-flash, sudo may ask for your password" >&2
+                  echo "rift-vm: writing $image onto a drive in $work with rift-flash, sudo may ask for your password" >&2
                   if [ -n "$firstboot" ]; then
                     # no passphrase goes in, the drive asks for one when it first starts
-                    sudo "$(command -v eclipse-flash)" "''${flash[@]}" "$image" "$work/drive.img"
+                    sudo "$(command -v rift-flash)" "''${flash[@]}" "$image" "$work/drive.img"
                   else
                     # sudo sets a path of its own. the passfile is read as the person running this, not
                     # as root, which is what the redirect is for
                     # shellcheck disable=SC2024
-                    sudo "$(command -v eclipse-flash)" "''${flash[@]}" "$image" "$work/drive.img" < "$persist"
+                    sudo "$(command -v rift-flash)" "''${flash[@]}" "$image" "$work/drive.img" < "$persist"
                   fi
                   image=$work/drive.img
                 else
@@ -331,7 +331,7 @@
                   case $image in /nix/store/*) copy=1 ;; esac
                   if [ ! -w "$image" ]; then copy=1; fi
                   if [ $copy = 1 ]; then
-                    echo "eclipse-vm: $image is read-only, copying it to $work" >&2
+                    echo "rift-vm: $image is read-only, copying it to $work" >&2
                     cp --reflink=auto "$image" "$work/drive.img"
                     chmod u+w "$work/drive.img"
                     image=$work/drive.img
@@ -344,7 +344,7 @@
                 if [ -w /dev/kvm ]; then
                   args+=(-accel kvm -cpu host)
                 else
-                  echo "eclipse-vm: no /dev/kvm, using tcg, this is slow" >&2
+                  echo "rift-vm: no /dev/kvm, using tcg, this is slow" >&2
                   args+=(-accel tcg -cpu max)
                 fi
                 serial=1
@@ -358,12 +358,12 @@
                 if [ $serial = 1 ]; then args+=(-serial mon:stdio); fi
                 if [ $display = 1 ]; then args+=(-display none); fi
 
-                echo "eclipse-vm: booting $image as an nvme drive" >&2
+                echo "rift-vm: booting $image as an nvme drive" >&2
                 qemu-system-x86_64 "''${args[@]}" \
                   -drive if=pflash,format=raw,readonly=on,file=${pkgs.OVMF.fd}/FV/OVMF_CODE.fd \
                   -drive if=pflash,format=raw,file="$work/vars.fd" \
                   -drive if=none,id=disk0,format=raw,file="$image" \
-                  -device nvme,drive=disk0,serial=eclipse \
+                  -device nvme,drive=disk0,serial=rift \
                   "$@" <&0 &
                 qemu=$!
                 wait "$qemu"
@@ -376,7 +376,7 @@
             vm = {
               type = "app";
               program = toString (
-                pkgs.writeShellScript "eclipse-vm-app" ''
+                pkgs.writeShellScript "rift-vm-app" ''
                   exec ${lib.getExe self'.packages.vm} --image ${self'.packages.image}/*.raw "$@"
                 ''
               );

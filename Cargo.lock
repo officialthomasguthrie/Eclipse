@@ -421,7 +421,7 @@ name = "aura"
 version = "0.1.0"
 dependencies = [
  "blocking",
- "libeclipse",
+ "librift",
  "serde",
  "serde_json",
  "toml",
@@ -914,7 +914,7 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "iced_layershell",
- "libeclipse",
+ "librift",
 ]
 
 [[package]]
@@ -1198,34 +1198,6 @@ name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
-
-[[package]]
-name = "eclipse-cli"
-version = "0.1.0"
-dependencies = [
- "libeclipse",
- "rustix 1.1.4",
-]
-
-[[package]]
-name = "eclipse-flash"
-version = "0.1.0"
-dependencies = [
- "libeclipse",
- "rustix 1.1.4",
- "ruzstd",
-]
-
-[[package]]
-name = "eclipse-flash-app"
-version = "0.1.0"
-dependencies = [
- "eclipse-flash",
- "iced",
- "libeclipse",
- "png",
- "rfd",
-]
 
 [[package]]
 name = "either"
@@ -2373,16 +2345,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libeclipse"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.3.4",
- "serde",
- "serde_json",
- "zbus",
-]
-
-[[package]]
 name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2437,6 +2399,16 @@ dependencies = [
  "libc",
  "plain",
  "redox_syscall 0.9.1",
+]
+
+[[package]]
+name = "librift"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "serde",
+ "serde_json",
+ "zbus",
 ]
 
 [[package]]
@@ -3265,7 +3237,7 @@ version = "0.1.0"
 dependencies = [
  "landlock",
  "libc",
- "libeclipse",
+ "librift",
  "rustix 1.1.4",
  "seccompiler",
  "zbus",
@@ -3850,6 +3822,34 @@ dependencies = [
  "wayland-protocols",
  "web-sys",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "rift-cli"
+version = "0.1.0"
+dependencies = [
+ "librift",
+ "rustix 1.1.4",
+]
+
+[[package]]
+name = "rift-flash"
+version = "0.1.0"
+dependencies = [
+ "librift",
+ "rustix 1.1.4",
+ "ruzstd",
+]
+
+[[package]]
+name = "rift-flash-app"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "librift",
+ "png",
+ "rfd",
+ "rift-flash",
 ]
 
 [[package]]
@@ -4511,7 +4511,7 @@ dependencies = [
 name = "syzygy"
 version = "0.1.0"
 dependencies = [
- "libeclipse",
+ "librift",
  "zbus",
 ]
 
@@ -4712,7 +4712,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 name = "totality-splash"
 version = "0.1.0"
 dependencies = [
- "libeclipse",
+ "librift",
 ]
 
 [[package]]
@@ -5000,7 +5000,7 @@ name = "vault"
 version = "0.1.0"
 dependencies = [
  "blocking",
- "libeclipse",
+ "librift",
  "rustix 1.1.4",
  "serde",
  "serde_json",

@@ -1,7 +1,7 @@
 [package]
 name = "umbra"
 version.workspace = true
-description = "The Eclipse compositor"
+description = "The Rift compositor"
 authors.workspace = true
 license.workspace = true
 edition = "2021"

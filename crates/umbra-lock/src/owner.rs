@@ -39,7 +39,7 @@ mod tests {
     use super::*;
 
     const PASSWD: &str = "root:x:0:0:System administrator:/root:/bin/sh\n\
-        eclipse:x:1000:100:Eclipse owner:/home/eclipse:/run/current-system/sw/bin/fish\n\
+        rift:x:1000:100:Rift owner:/home/rift:/run/current-system/sw/bin/fish\n\
         guest:x:1001:100::/home/guest:/bin/sh\n\
         office:x:1002:100:Ada Lovelace,Room 4,555:/home/office:/bin/sh\n";
 
@@ -48,8 +48,8 @@ mod tests {
         assert_eq!(
             find(PASSWD, 1000),
             Some(Owner {
-                user: "eclipse".into(),
-                name: "Eclipse owner".into()
+                user: "rift".into(),
+                name: "Rift owner".into()
             })
         );
     }
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn an_unknown_uid_or_a_broken_line_is_nobody() {
         assert_eq!(find(PASSWD, 4242), None);
-        assert_eq!(find("eclipse:x:not-a-number:100::/:/bin/sh\n", 1000), None);
+        assert_eq!(find("rift:x:not-a-number:100::/:/bin/sh\n", 1000), None);
         assert_eq!(find(":x:1000:100::/:/bin/sh\n", 1000), None);
     }
 }

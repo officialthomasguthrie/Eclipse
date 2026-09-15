@@ -1,6 +1,6 @@
 # vault: timeline snapshots of home, rustic backups, drive cloning. vault serve answers on the
-# system bus as dev.eclipse.Vault and a timer takes a snapshot every hour. backups go to a folder on
-# another disk that sudo vault target chooses. sudo eclipse clone writes a second drive onto a
+# system bus as dev.rift.Vault and a timer takes a snapshot every hour. backups go to a folder on
+# another disk that sudo vault target chooses. sudo rift clone writes a second drive onto a
 # removable disk, as root in the terminal, not through the service
 {
   config,
@@ -10,8 +10,8 @@
   ...
 }:
 let
-  cfg = config.eclipse.vault;
-  busName = "dev.eclipse.Vault";
+  cfg = config.rift.vault;
+  busName = "dev.rift.Vault";
   # anyone on the machine may list, take and restore. a restore runs as the account that asked,
   # and every take runs the retention rules. only root owns the name
   policy = pkgs.writeTextFile {
@@ -49,7 +49,7 @@ let
     };
 in
 {
-  options.eclipse.vault = {
+  options.rift.vault = {
     enable = lib.mkEnableOption "Vault, snapshots and backups";
     package = lib.mkOption {
       type = lib.types.package;
@@ -111,7 +111,7 @@ in
           "/home"
         ];
         # the backup target and its password, only root reads them
-        StateDirectory = "eclipse/vault";
+        StateDirectory = "rift/vault";
         StateDirectoryMode = "0700";
         # a restore from a backup lands here before the copy into home
         CacheDirectory = "vault";

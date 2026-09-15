@@ -93,7 +93,7 @@ in
     dockerCompat = true;
   };
   # rootless containers map their users into the owner's ranges
-  users.users.eclipse = {
+  users.users.rift = {
     subUidRanges = [
       {
         startUid = 100000;

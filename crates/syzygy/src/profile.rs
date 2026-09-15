@@ -4,7 +4,7 @@
 //! The file is a delta, not a dump. `[detected]` is what Syzygy worked out about this machine
 //! and holds only what differs from the built in defaults, so it stays a few lines and a change
 //! to a default reaches every machine on its next boot. `[set]` is what a person or another
-//! Eclipse service decided; Syzygy never writes into it and copies it through every rewrite,
+//! Rift service decided; Syzygy never writes into it and copies it through every rewrite,
 //! comments and all. Effective values are the defaults, then `[detected]`, then `[set]`.
 //!
 //! Only the subset of TOML written here is read back: `key = "string"`, `key = 12`, the two
@@ -443,7 +443,7 @@ pub fn record(
 #[must_use]
 pub fn render(identity: &Identity, detected: &Settings, set_text: &str) -> String {
     let mut out = String::from(
-        "# Eclipse host profile, written by Syzygy.\n\
+        "# Rift host profile, written by Syzygy.\n\
          # [detected] is what Syzygy worked out about this machine. It is rewritten on every\n\
          # boot and holds only what differs from the defaults.\n\
          # Put your own settings under [set]. They win, and Syzygy leaves them alone.\n",

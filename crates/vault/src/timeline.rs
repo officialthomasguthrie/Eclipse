@@ -40,9 +40,9 @@ impl Default for Keep {
     }
 }
 
-// a snapshot's name is the UTC time it was taken, `2026-09-12T14:00:03Z`. the eclipse command reads
-// the names too, so libeclipse holds the one way to write and read them
-pub use libeclipse::vault::{snapshot_name as name_of, snapshot_time as parse};
+// a snapshot's name is the UTC time it was taken, `2026-09-12T14:00:03Z`. the rift command reads
+// the names too, so librift holds the one way to write and read them
+pub use librift::vault::{snapshot_name as name_of, snapshot_time as parse};
 
 /// The times out of `times` that the rules keep.
 pub fn kept(times: &[i64], keep: Keep) -> BTreeSet<i64> {

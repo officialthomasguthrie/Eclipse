@@ -6,7 +6,7 @@
 //! new too: LUKS2 with a volume key of its own around a new btrfs, and every subvolume but the
 //! snapshots is sent into it from a read-only snapshot of this drive's. Vault only writes onto a
 //! whole disk that is removable or on USB, that nothing uses, and that the running system is not on.
-//! The layout, the guard and the steps that write a drive are libeclipse's, eclipse-flash uses them
+//! The layout, the guard and the steps that write a drive are librift's, rift-flash uses them
 //! too.
 
 use std::ffi::OsString;
@@ -15,9 +15,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use libeclipse::disk::run::{self, Mounted, Persist, copy, copy_file, feed, on_path, settle, tool};
-pub use libeclipse::disk::{Block, confirmation, describe, passphrase_problem};
-use libeclipse::disk::{
+use librift::disk::run::{self, Mounted, Persist, copy, copy_file, feed, on_path, settle, tool};
+pub use librift::disk::{Block, confirmation, describe, passphrase_problem};
+use librift::disk::{
     LSBLK, MACHINE_ID, STORE_SIZE, Slot, Table, VERITY_SIZE, disks_in, machine_id, needed,
     partition_node, read_lsblk, read_table, refuse, script, size,
 };
@@ -87,8 +87,8 @@ pub fn running_slot(
     })
 }
 
-/// The uki of `version` among the file names in the esp's `EFI/Linux`: `eclipse_0.2.0.efi`, or one
-/// with a boot counter, `eclipse_0.2.0+2.efi` or `eclipse_0.2.0+1-2.efi`. The one without a counter
+/// The uki of `version` among the file names in the esp's `EFI/Linux`: `rift_0.2.0.efi`, or one
+/// with a boot counter, `rift_0.2.0+2.efi` or `rift_0.2.0+1-2.efi`. The one without a counter
 /// first.
 pub fn uki(names: &[String], id: &str, version: &str) -> Option<String> {
     let prefix = format!("{id}_{version}");
@@ -620,51 +620,47 @@ mod tests {
         let names = |list: &[&str]| list.iter().map(ToString::to_string).collect::<Vec<_>>();
         assert_eq!(
             uki(
-                &names(&["eclipse_0.2.0.efi", "eclipse_0.3.0+0-3.efi"]),
-                "eclipse",
+                &names(&["rift_0.2.0.efi", "rift_0.3.0+0-3.efi"]),
+                "rift",
                 "0.2.0"
             )
             .as_deref(),
-            Some("eclipse_0.2.0.efi")
+            Some("rift_0.2.0.efi")
         );
         assert_eq!(
-            uki(&names(&["eclipse_0.1.0+2-1.efi"]), "eclipse", "0.1.0").as_deref(),
-            Some("eclipse_0.1.0+2-1.efi")
+            uki(&names(&["rift_0.1.0+2-1.efi"]), "rift", "0.1.0").as_deref(),
+            Some("rift_0.1.0+2-1.efi")
         );
         assert_eq!(
-            uki(&names(&["eclipse_0.1.0+3.efi"]), "eclipse", "0.1.0").as_deref(),
-            Some("eclipse_0.1.0+3.efi")
+            uki(&names(&["rift_0.1.0+3.efi"]), "rift", "0.1.0").as_deref(),
+            Some("rift_0.1.0+3.efi")
         );
         for other in [
-            "eclipse_0.1.0.1.efi",
-            "eclipse_0.1.0+.efi",
-            "eclipse_0.1.0+a-1.efi",
-            "eclipse_0.1.0+1-.efi",
-            "eclipse_0.1.0.efi.bak",
+            "rift_0.1.0.1.efi",
+            "rift_0.1.0+.efi",
+            "rift_0.1.0+a-1.efi",
+            "rift_0.1.0+1-.efi",
+            "rift_0.1.0.efi.bak",
             "other_0.1.0.efi",
         ] {
-            assert_eq!(uki(&names(&[other]), "eclipse", "0.1.0"), None, "{other}");
+            assert_eq!(uki(&names(&[other]), "rift", "0.1.0"), None, "{other}");
         }
     }
 
     #[test]
     fn the_image_id_and_version_come_from_os_release() {
-        let text =
-            "NAME=NixOS\nIMAGE_ID=\"eclipse\"\nIMAGE_VERSION=\"0.2.0\"\nVERSION_ID=\"26.05\"\n";
+        let text = "NAME=NixOS\nIMAGE_ID=\"rift\"\nIMAGE_VERSION=\"0.2.0\"\nVERSION_ID=\"26.05\"\n";
         assert_eq!(
             os_release(text),
-            Some(("eclipse".to_string(), "0.2.0".to_string()))
+            Some(("rift".to_string(), "0.2.0".to_string()))
         );
         assert_eq!(
-            os_release("IMAGE_ID=eclipse\nIMAGE_VERSION=0.1.0\n"),
-            Some(("eclipse".to_string(), "0.1.0".to_string()))
+            os_release("IMAGE_ID=rift\nIMAGE_VERSION=0.1.0\n"),
+            Some(("rift".to_string(), "0.1.0".to_string()))
         );
-        assert_eq!(os_release("IMAGE_ID=eclipse\n"), None);
-        assert_eq!(
-            os_release("IMAGE_ID=eclipse\nIMAGE_VERSION=\"0.1 0\"\n"),
-            None
-        );
-        assert_eq!(os_release("IMAGE_IDX=eclipse\nIMAGE_VERSION=0.1.0\n"), None);
+        assert_eq!(os_release("IMAGE_ID=rift\n"), None);
+        assert_eq!(os_release("IMAGE_ID=rift\nIMAGE_VERSION=\"0.1 0\"\n"), None);
+        assert_eq!(os_release("IMAGE_IDX=rift\nIMAGE_VERSION=0.1.0\n"), None);
     }
 
     /// What cryptsetup 2.8.7's `veritysetup status usr` prints for slot b's store.

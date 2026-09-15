@@ -1,0 +1,29 @@
+[package]
+name = "rift-flash-app"
+description = "The rift-flash app: writes Rift onto a drive from macOS, Windows, or Linux in a window"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "rift-flash-app"
+path = "src/main.rs"
+
+[dependencies]
+# the disks and the image, read by the command line's own code. the app never writes a disk, it
+# starts rift-flash write with the rights to
+rift-flash = { path = "../rift-flash" }
+librift = { workspace = true, features = ["disk"] }
+# a normal window through winit on all three systems, drawn in software so no gpu driver is needed.
+# noto sans is built in from fonts/, so no fira-sans
+iced = { version = "0.14.0", default-features = false, features = ["tiny-skia", "thread-pool", "x11", "wayland"] }
+# the system's own dialog for choosing the image
+rfd = "0.17.2"
+# what --screenshot saves
+png = "0.18"
+
+[lints]
+workspace = true

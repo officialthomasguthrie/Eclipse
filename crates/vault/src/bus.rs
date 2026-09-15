@@ -1,4 +1,4 @@
-//! Vault on the system bus: `dev.eclipse.Vault` at `/dev/eclipse/Vault`.
+//! Vault on the system bus: `dev.rift.Vault` at `/dev/rift/Vault`.
 //!
 //! `List` returns the snapshots of home, oldest first. `Take` takes one now and runs the retention
 //! rules. `Restore` copies one file back from a snapshot as the account that asked, and refuses
@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use libeclipse::Component;
+use librift::Component;
 use zbus::fdo;
 use zbus::message::Header;
 
@@ -24,7 +24,7 @@ pub struct Vault {
     home: Arc<PathBuf>,
 }
 
-#[zbus::interface(name = "dev.eclipse.Vault")]
+#[zbus::interface(name = "dev.rift.Vault")]
 impl Vault {
     /// Every snapshot of home, oldest first.
     async fn list(&self) -> fdo::Result<Vec<String>> {

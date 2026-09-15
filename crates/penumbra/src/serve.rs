@@ -1,4 +1,4 @@
-//! Penumbra on the system bus: `dev.eclipse.Penumbra` at `/dev/eclipse/Penumbra`.
+//! Penumbra on the system bus: `dev.rift.Penumbra` at `/dev/rift/Penumbra`.
 //!
 //! `List` returns every app whose network is off or that runs in a sandbox now. `SetNetwork` turns
 //! an app's network off or on, in its sandboxes that run now and in every one it starts later, and
@@ -14,8 +14,8 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard};
 
-use libeclipse::Component;
-use libeclipse::penumbra::name_problem;
+use librift::Component;
+use librift::penumbra::name_problem;
 use zbus::fdo;
 use zbus::message::Header;
 
@@ -29,7 +29,7 @@ pub const OFF_FILE: &str = "network-off";
 const TRIES: usize = 5;
 
 /// What `Starting` says to a process that is not in the scope of a sandbox.
-const NOT_A_SANDBOX: &str = "Penumbra starts a sandbox only from the scope eclipse run --sandbox \
+const NOT_A_SANDBOX: &str = "Penumbra starts a sandbox only from the scope rift run --sandbox \
 makes for it, and this process is not in one.";
 
 /// The apps that are off, where that is kept, and where the scopes are.
@@ -184,7 +184,7 @@ impl Penumbra {
     }
 }
 
-#[zbus::interface(name = "dev.eclipse.Penumbra")]
+#[zbus::interface(name = "dev.rift.Penumbra")]
 impl Penumbra {
     /// Every app whose network is off or that runs in a sandbox now: its name, whether it has the
     /// network, and how many of its sandboxes run.

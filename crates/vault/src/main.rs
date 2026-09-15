@@ -1,5 +1,5 @@
 //! vault: Timeline snapshots of home, backups of it, and clones of the whole drive. `vault serve`
-//! answers on the system bus as `dev.eclipse.Vault`, `vault take` is what the hourly timer runs, and
+//! answers on the system bus as `dev.rift.Vault`, `vault take` is what the hourly timer runs, and
 //! `vault prune` runs the retention rules on demand. `vault target` chooses the folder on another
 //! disk that backups go to, `vault backup` makes one and `vault backups` lists them. `vault clone`
 //! writes a second drive onto a removable disk.
@@ -25,7 +25,7 @@ const SNAPSHOTS: &str = "/persist/@snapshots/home";
 const HOME: &str = "/home";
 /// The backup target and its password, restores from a backup on their way, the backup disk while
 /// it is mounted, and where disks are found.
-const STATE: &str = "/var/lib/eclipse/vault";
+const STATE: &str = "/var/lib/rift/vault";
 const CACHE: &str = "/var/cache/vault";
 const RUN: &str = "/run/vault";
 const DEVICES: &str = "/dev/disk/by-uuid";
@@ -210,7 +210,7 @@ fn ask_password(folder: &Path) -> Result<String, String> {
 fn clone_drive(cloner: &Cloner, disk: &Path, serial: Option<&str>) -> Result<(), String> {
     if !rustix::process::geteuid().is_root() {
         return Err(
-            "A clone erases a whole disk, so it needs root. Run sudo eclipse clone <disk>.".into(),
+            "A clone erases a whole disk, so it needs root. Run sudo rift clone <disk>.".into(),
         );
     }
     let plan = cloner.inspect(disk)?;
@@ -289,7 +289,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             "--from-backup" => from_backup = true,
             "--serial" => serial = Some(value(&mut args, "--serial")?),
             "--version" | "-V" => {
-                println!("vault {}", libeclipse::VERSION);
+                println!("vault {}", librift::VERSION);
                 return Ok(None);
             }
             "--help" | "-h" => {
@@ -375,7 +375,7 @@ fn usage() {
     let keep = Keep::default();
     println!("Usage: vault <command> [options]\n");
     println!("Commands:");
-    println!("  serve            Answer on the system bus as dev.eclipse.Vault and stay running");
+    println!("  serve            Answer on the system bus as dev.rift.Vault and stay running");
     println!("  take             Take a snapshot of home now, then apply the retention rules");
     println!("  prune            Apply the retention rules");
     println!("  list             Print the snapshots, oldest first");
@@ -496,18 +496,13 @@ mod tests {
             }
         );
 
-        let args = parse(&[
-            "target",
-            "/run/media/eclipse/Disk/Eclipse",
-            "--state",
-            "/tmp/v",
-        ])
-        .unwrap()
-        .unwrap();
+        let args = parse(&["target", "/run/media/rift/Disk/Rift", "--state", "/tmp/v"])
+            .unwrap()
+            .unwrap();
         assert_eq!(
             args.command,
             Command::Target {
-                folder: PathBuf::from("/run/media/eclipse/Disk/Eclipse")
+                folder: PathBuf::from("/run/media/rift/Disk/Rift")
             }
         );
         assert_eq!(args.backups.state, PathBuf::from("/tmp/v"));

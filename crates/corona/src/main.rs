@@ -18,13 +18,13 @@ mod ui;
 use std::env;
 use std::process::ExitCode;
 
-use libeclipse::{aura, os};
+use librift::{aura, os};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("--version") => {
-            println!("corona {}", libeclipse::VERSION);
+            println!("corona {}", librift::VERSION);
             ExitCode::SUCCESS
         }
         Some("--route") => {
@@ -110,7 +110,7 @@ fn panel() -> ExitCode {
     let apps = launcher::load();
     eprintln!(
         "corona {}: {} apps, opening the panel",
-        libeclipse::VERSION,
+        librift::VERSION,
         apps.len()
     );
     match ui::run(apps) {

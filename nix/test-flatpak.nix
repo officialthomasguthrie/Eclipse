@@ -3,8 +3,8 @@
 { pkgs }:
 let
   inherit (pkgs) lib;
-  runtime = "dev.eclipse.TestPlatform";
-  app = "dev.eclipse.TestApp";
+  runtime = "dev.rift.TestPlatform";
+  app = "dev.rift.TestApp";
   branch = "test";
   # what the app does: reads the file the document portal gave it, then the same file where it is in
   # home, asks the desktop portal whether there is a network, and asks the user manager for
@@ -25,7 +25,7 @@ let
     echo finished
   '';
 in
-pkgs.runCommand "eclipse-test-flatpak" { nativeBuildInputs = [ pkgs.flatpak ]; } ''
+pkgs.runCommand "rift-test-flatpak" { nativeBuildInputs = [ pkgs.flatpak ]; } ''
   export HOME=$TMPDIR
 
   # a runtime's files are its usr, and build-export wants the files folder a build-init makes as well

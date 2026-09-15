@@ -293,7 +293,7 @@ fn unescape(field: &str) -> PathBuf {
 mod tests {
     use super::*;
 
-    const HOME: &str = "/home/eclipse";
+    const HOME: &str = "/home/rift";
 
     fn paths(list: &[&str]) -> Vec<PathBuf> {
         list.iter().map(PathBuf::from).collect()
@@ -303,10 +303,8 @@ mod tests {
     /// another folder in home, and a name that is not there.
     fn resolve(path: &Path) -> io::Result<PathBuf> {
         match path.to_str() {
-            Some("/home/eclipse/project/persist") => Ok(PathBuf::from("/persist/@home")),
-            Some("/home/eclipse/project/notes") => {
-                Ok(PathBuf::from("/home/eclipse/Documents/notes"))
-            }
+            Some("/home/rift/project/persist") => Ok(PathBuf::from("/persist/@home")),
+            Some("/home/rift/project/notes") => Ok(PathBuf::from("/home/rift/Documents/notes")),
             Some(missing) if missing.ends_with("missing") => {
                 Err(io::Error::from(io::ErrorKind::NotFound))
             }
@@ -323,7 +321,7 @@ mod tests {
             "/persist",
             "/var",
             "/tmp",
-            "/run/media/eclipse/Windows",
+            "/run/media/rift/Windows",
         ])
     }
 
@@ -348,19 +346,19 @@ mod tests {
 
     #[test]
     fn the_folder_is_where_it_runs_and_what_it_changes() {
-        let policy = checked("/home/eclipse/project", &request(None, &[], &[])).unwrap();
+        let policy = checked("/home/rift/project", &request(None, &[], &[])).unwrap();
         assert_eq!(
             policy,
             Policy {
                 home: PathBuf::from(HOME),
                 read: vec![],
-                write: paths(&["/home/eclipse/project"]),
+                write: paths(&["/home/rift/project"]),
             }
         );
         let policy = checked(
-            "/home/eclipse/project",
+            "/home/rift/project",
             &request(
-                Some("/home/eclipse/other"),
+                Some("/home/rift/other"),
                 &["notes", HOME],
                 &["/tmp/build", "."],
             ),
@@ -370,8 +368,8 @@ mod tests {
             policy,
             Policy {
                 home: PathBuf::from(HOME),
-                read: paths(&["/home/eclipse/Documents/notes", HOME]),
-                write: paths(&["/home/eclipse/other", "/tmp/build", "/home/eclipse/project",]),
+                read: paths(&["/home/rift/Documents/notes", HOME]),
+                write: paths(&["/home/rift/other", "/tmp/build", "/home/rift/project",]),
             }
         );
     }
@@ -391,18 +389,18 @@ mod tests {
     fn nothing_outside_home_and_tmp() {
         for path in [
             "/persist",
-            "/persist/@home/eclipse",
+            "/persist/@home/rift",
             "/dev/nvme0n1",
             "/sys/block",
             "/",
             "/home",
             "/home/other",
             "/tmp",
-            "/var/lib/eclipse",
-            "/run/media/eclipse",
-            "/home/eclipse/project/persist",
+            "/var/lib/rift",
+            "/run/media/rift",
+            "/home/rift/project/persist",
         ] {
-            let refused = checked("/home/eclipse/project", &request(None, &[path], &[]));
+            let refused = checked("/home/rift/project", &request(None, &[path], &[]));
             assert!(
                 refused
                     .as_ref()
@@ -423,7 +421,7 @@ mod tests {
             "{refused}"
         );
         let refused = checked("/tmp/work", &request(Some(HOME), &[], &[])).unwrap_err();
-        assert!(refused.contains("--read /home/eclipse"), "{refused}");
+        assert!(refused.contains("--read /home/rift"), "{refused}");
         assert!(checked("/tmp/work", &request(None, &[], &[HOME])).is_err());
         assert!(checked("/tmp/work", &request(None, &[HOME], &[])).is_ok());
     }
@@ -431,33 +429,33 @@ mod tests {
     #[test]
     fn nothing_with_another_file_system_at_it_or_inside_it() {
         let mut stick = mounts();
-        stick.push(PathBuf::from("/home/eclipse/stick"));
+        stick.push(PathBuf::from("/home/rift/stick"));
         let with_stick = |here: &str, request: &Request| {
             check(request, Path::new(HOME), Path::new(here), resolve, &stick)
         };
         let refused = with_stick("/tmp/work", &request(None, &[HOME], &[])).unwrap_err();
         assert!(
-            refused.contains("/home/eclipse has /home/eclipse/stick mounted inside it."),
+            refused.contains("/home/rift has /home/rift/stick mounted inside it."),
             "{refused}"
         );
         let refused = with_stick(
             "/tmp/work",
-            &request(None, &["/home/eclipse/stick/photos"], &[]),
+            &request(None, &["/home/rift/stick/photos"], &[]),
         )
         .unwrap_err();
         assert!(
-            refused.contains("is on another file system, mounted at /home/eclipse/stick."),
+            refused.contains("is on another file system, mounted at /home/rift/stick."),
             "{refused}"
         );
-        let refused = with_stick("/home/eclipse/stick", &request(None, &[], &[])).unwrap_err();
+        let refused = with_stick("/home/rift/stick", &request(None, &[], &[])).unwrap_err();
         assert!(
             refused.contains("is where another file system is mounted"),
             "{refused}"
         );
         assert!(
             with_stick(
-                "/home/eclipse/project",
-                &request(None, &["/home/eclipse/Documents"], &[])
+                "/home/rift/project",
+                &request(None, &["/home/rift/Documents"], &[])
             )
             .is_ok()
         );
@@ -487,7 +485,7 @@ mod tests {
         let policy = Policy {
             home: PathBuf::from(HOME),
             read: paths(&[HOME, "/tmp/data"]),
-            write: paths(&["/home/eclipse/project", "/tmp"]),
+            write: paths(&["/home/rift/project", "/tmp"]),
         };
         let line: Vec<String> = policy
             .bwrap(
@@ -503,17 +501,17 @@ mod tests {
              --ro-bind-try /nix/store /nix/store --ro-bind-try /usr /usr"
         ));
         assert!(text.contains(
-            "--dev /dev --proc /proc --tmpfs /tmp --tmpfs /home --dir /home/eclipse \
-             --bind /tmp /tmp --ro-bind /home/eclipse /home/eclipse --ro-bind /tmp/data /tmp/data \
-             --bind /home/eclipse/project /home/eclipse/project --chdir /home/eclipse/project \
+            "--dev /dev --proc /proc --tmpfs /tmp --tmpfs /home --dir /home/rift \
+             --bind /tmp /tmp --ro-bind /home/rift /home/rift --ro-bind /tmp/data /tmp/data \
+             --bind /home/rift/project /home/rift/project --chdir /home/rift/project \
              -- /nix/store/x-workspace/bin/penumbra enter --read /nix/store"
         ));
         assert!(text.ends_with(
             "--read /nix/var/nix/profiles --read /proc --write /dev --write /tmp \
-             --read /home/eclipse --read /tmp/data --write /home/eclipse/project --write /tmp \
+             --read /home/rift --read /tmp/data --write /home/rift/project --write /tmp \
              -- sh -c ls /"
         ));
-        assert!(!text.contains("--write /home/eclipse "));
+        assert!(!text.contains("--write /home/rift "));
         assert_eq!(line.last().map(String::as_str), Some("ls /"));
     }
 
@@ -522,7 +520,7 @@ mod tests {
         let policy = Policy {
             home: PathBuf::from(HOME),
             read: vec![],
-            write: paths(&["/home/eclipse/project"]),
+            write: paths(&["/home/rift/project"]),
         };
         let text: Vec<String> = policy
             .bwrap(Path::new("/bin/penumbra"), &["true".to_string()])
@@ -530,9 +528,8 @@ mod tests {
             .map(|word| word.to_string_lossy().into_owned())
             .collect();
         assert!(
-            text.join(" ").contains(
-                "--write /tmp --write /home/eclipse --write /home/eclipse/project -- true"
-            )
+            text.join(" ")
+                .contains("--write /tmp --write /home/rift --write /home/rift/project -- true")
         );
     }
 
@@ -541,12 +538,12 @@ mod tests {
         let mountinfo = "\
 22 1 0:21 / / rw,relatime shared:1 - tmpfs tmpfs rw,mode=755
 31 22 0:30 /@home /home rw,noatime shared:5 - btrfs /dev/mapper/persist rw
-40 31 8:1 / /home/eclipse/My\\040stick rw - exfat /dev/sda1 rw
+40 31 8:1 / /home/rift/My\\040stick rw - exfat /dev/sda1 rw
 41 22 8:2 / /run/media/a\\134b rw - vfat /dev/sda2 rw
 ";
         assert_eq!(
             mount_points(mountinfo),
-            paths(&["/", "/home", "/home/eclipse/My stick", "/run/media/a\\b"])
+            paths(&["/", "/home", "/home/rift/My stick", "/run/media/a\\b"])
         );
     }
 }

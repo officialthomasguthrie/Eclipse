@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::{fs, io};
 
-use libeclipse::penumbra::{app_of_scope, name_problem};
+use librift::penumbra::{app_of_scope, name_problem};
 
 /// How deep the scope of a sandbox is: user.slice, the account's slice, its user manager,
 /// app.slice, the scope.

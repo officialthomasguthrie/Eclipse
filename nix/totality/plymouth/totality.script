@@ -1,4 +1,4 @@
-# the boot progress is an eclipse: a black disc slides over a light one until a thin ring is left.
+# the boot progress: a black disc slides over a light one until a thin ring is left.
 # neutral dark gray background, nothing else. pngs come from tools/gen-totality-assets.py, drawn large
 # and scaled here to a fifth of the screen height so the same theme fits every mode.
 

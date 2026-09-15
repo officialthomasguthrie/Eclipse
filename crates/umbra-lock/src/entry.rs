@@ -146,9 +146,9 @@ mod tests {
 
     #[test]
     fn enter_hands_over_what_was_typed_and_empties_the_field() {
-        let mut entry = typed("eclipse");
-        assert_eq!(entry.len(), 7);
-        assert_eq!(entry.key(Key::Enter), Some("eclipse".into()));
+        let mut entry = typed("rift");
+        assert_eq!(entry.len(), 4);
+        assert_eq!(entry.key(Key::Enter), Some("rift".into()));
         assert!(entry.is_empty());
         assert_eq!(entry.status(), Status::Checking);
     }
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn keys_wait_while_pam_checks() {
-        let mut entry = typed("eclipse");
+        let mut entry = typed("rift");
         entry.key(Key::Enter);
         assert_eq!(entry.key(Key::Text("x")), None);
         assert_eq!(entry.key(Key::Enter), None);
@@ -187,10 +187,10 @@ mod tests {
 
     #[test]
     fn only_the_right_password_unlocks() {
-        let mut entry = typed("eclipse");
+        let mut entry = typed("rift");
         entry.key(Key::Enter);
         assert!(entry.checked(Verdict::Accepted));
-        let mut entry = typed("eclipse");
+        let mut entry = typed("rift");
         entry.key(Key::Enter);
         assert!(!entry.checked(Verdict::Failed));
         assert_eq!(entry.status(), Status::Failed);

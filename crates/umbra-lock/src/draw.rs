@@ -328,7 +328,7 @@ mod tests {
     fn painted(width: u32, height: u32, typed: usize, scale: u32) -> Vec<u8> {
         let mut pixels = vec![0; width as usize * height as usize * 4];
         let view = View {
-            name: "Eclipse owner",
+            name: "Rift owner",
             typed,
             status: Status::Typing,
         };
