@@ -33,12 +33,12 @@
       flake = {
         # one nixos module per component
         nixosModules = {
-          totality = import ./nix/modules/totality.nix;
-          umbra = import ./nix/modules/umbra.nix;
-          corona = import ./nix/modules/corona.nix;
-          aura = import ./nix/modules/aura.nix;
-          syzygy = import ./nix/modules/syzygy.nix;
-          penumbra = import ./nix/modules/penumbra.nix;
+          liftoff = import ./nix/modules/liftoff.nix;
+          horizon = import ./nix/modules/horizon.nix;
+          lens = import ./nix/modules/lens.nix;
+          quasar = import ./nix/modules/quasar.nix;
+          orbit = import ./nix/modules/orbit.nix;
+          airlock = import ./nix/modules/airlock.nix;
           vault = import ./nix/modules/vault.nix;
           default = {
             imports = builtins.attrValues (builtins.removeAttrs self.nixosModules [ "default" ]);
@@ -81,14 +81,14 @@
           # the compositor is built apart from the small crates: it pulls in smithay and a dozen
           # system libraries, and the rest of the workspace should stay cheap to build and check. the
           # rift-flash app runs on other systems, not on the drive, and ci builds it on all three
-          firstParty = "--workspace --exclude umbra --exclude niri-config --exclude niri-ipc --exclude rift-flash-app";
+          firstParty = "--workspace --exclude horizon --exclude niri-config --exclude niri-ipc --exclude rift-flash-app";
           common = {
             inherit src;
             strictDeps = true;
             pname = "rift";
             version = "0.1.0";
             cargoExtraArgs = firstParty;
-            # corona's panel links the wayland client library and xkbcommon, the lock screen pam
+            # lens's panel links the wayland client library and xkbcommon, the lock screen pam
             nativeBuildInputs = lib.optionals pkgs.stdenv.isLinux [ pkgs.pkg-config ];
             buildInputs = lib.optionals pkgs.stdenv.isLinux [
               pkgs.wayland
@@ -97,7 +97,7 @@
             ];
           };
           cargoArtifacts = craneLib.buildDepsOnly common;
-          # every first-party binary except umbra in one package
+          # every first-party binary except horizon in one package
           workspace = craneLib.buildPackage (
             common
             // {
@@ -132,19 +132,19 @@
               '';
             }
           );
-          # umbra reads shaders, a cursor image and its default config from next to the sources,
+          # horizon reads shaders, a cursor image and its default config from next to the sources,
           # the cargo source filter alone would drop them
-          umbraSrc = lib.cleanSourceWith {
+          horizonSrc = lib.cleanSourceWith {
             src = craneLib.path ./.;
             filter =
-              path: type: craneLib.filterCargoSources path type || lib.hasInfix "/crates/umbra" (toString path);
+              path: type: craneLib.filterCargoSources path type || lib.hasInfix "/crates/horizon" (toString path);
           };
-          umbraCommon = {
-            src = umbraSrc;
+          horizonCommon = {
+            src = horizonSrc;
             strictDeps = true;
-            pname = "umbra";
+            pname = "horizon";
             version = "0.1.0";
-            cargoExtraArgs = "-p umbra";
+            cargoExtraArgs = "-p horizon";
             nativeBuildInputs = [
               pkgsRust.rustPlatform.bindgenHook
               pkgs.pkg-config
@@ -174,11 +174,11 @@
             );
             NIRI_BUILD_COMMIT = self.shortRev or self.dirtyShortRev or "unknown";
           };
-          umbraArtifacts = craneLib.buildDepsOnly umbraCommon;
-          umbra = craneLib.buildPackage (
-            umbraCommon
+          horizonArtifacts = craneLib.buildDepsOnly horizonCommon;
+          horizon = craneLib.buildPackage (
+            horizonCommon
             // {
-              cargoArtifacts = umbraArtifacts;
+              cargoArtifacts = horizonArtifacts;
               doCheck = false;
             }
           );
@@ -227,7 +227,7 @@
             inherit workspace;
             rift-flash = riftFlash;
           }
-          // lib.optionalAttrs pkgs.stdenv.isLinux { inherit umbra; }
+          // lib.optionalAttrs pkgs.stdenv.isLinux { inherit horizon; }
           // lib.optionalAttrs isImageHost {
             image = os.system.build.image;
             # the files systemd-sysupdate installs the next version from
@@ -395,7 +395,7 @@
             fmt = craneLib.cargoFmt { inherit src; };
             tests = craneLib.cargoTest (common // { inherit cargoArtifacts; });
           }
-          // lib.optionalAttrs pkgs.stdenv.isLinux { inherit umbra; };
+          // lib.optionalAttrs pkgs.stdenv.isLinux { inherit horizon; };
 
           devShells.default = craneLib.devShell {
             checks = self'.checks;

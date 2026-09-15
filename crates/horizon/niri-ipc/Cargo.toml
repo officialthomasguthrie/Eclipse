@@ -1,0 +1,18 @@
+[package]
+name = "niri-ipc"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition = "2021"
+repository.workspace = true
+description = "Types and helpers for talking to Horizon"
+
+[dependencies]
+clap = { workspace = true, optional = true }
+schemars = { version = "1.2.2", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+clap = ["dep:clap"]
+json-schema = ["dep:schemars"]

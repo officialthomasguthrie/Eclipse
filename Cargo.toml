@@ -2,19 +2,19 @@
 resolver = "3"
 members = [
   "crates/librift",
-  "crates/aura",
-  "crates/corona",
-  "crates/syzygy",
-  "crates/penumbra",
+  "crates/quasar",
+  "crates/lens",
+  "crates/orbit",
+  "crates/airlock",
   "crates/vault",
   "crates/rift-cli",
   "crates/rift-flash",
   "crates/rift-flash-app",
-  "crates/totality-splash",
-  "crates/umbra",
-  "crates/umbra-lock",
-  "crates/umbra/niri-config",
-  "crates/umbra/niri-ipc",
+  "crates/liftoff-splash",
+  "crates/horizon",
+  "crates/horizon-lock",
+  "crates/horizon/niri-config",
+  "crates/horizon/niri-ipc",
 ]
 
 [workspace.package]
@@ -28,7 +28,7 @@ authors = ["Thomas Guthrie"]
 [workspace.dependencies]
 librift = { path = "crates/librift" }
 
-# shared by the umbra crates
+# shared by the horizon crates
 anyhow = "1.0.104"
 bitflags = "2.13.1"
 clap = { version = "4.6.6", features = ["derive"] }

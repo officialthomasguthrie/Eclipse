@@ -38,9 +38,9 @@ let
     };
   };
 
-  # a boot is good once syzygy has written the host profile and greetd has started the session
+  # a boot is good once orbit has written the host profile and greetd has started the session
   checks =
-    lib.optional config.rift.syzygy.enable "syzygy.service"
+    lib.optional config.rift.orbit.enable "orbit.service"
     ++ lib.optional config.services.greetd.enable "greetd.service";
 in
 {

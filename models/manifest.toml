@@ -1,10 +1,10 @@
-# models Aura can use. weights never go in git.
+# models Quasar can use. weights never go in git.
 # shipped = true means it gets copied to the models subvolume when flashing, the rest download on demand.
 # empty sha256 means unpinned; tools/pin-models.sh prints the hashes. permissive licenses only.
 
 schema = 1
 
-# chat, tiered by host memory. syzygy picks, user can override
+# chat, tiered by host memory. orbit picks, user can override
 
 # the smallest one exists for the boot test in ci: it fits a 4G vm and answers in seconds.
 # test = true marks it, nothing ships it. q8 because that is the only quant qwen publishes for it
@@ -88,7 +88,7 @@ license = "Apache-2.0"
 shipped = false
 tier = { min_ram_gb = 48, min_vram_gb = 24 }
 
-# embeddings for search by meaning. aura runs the first one that is on the drive, and the boot test
+# embeddings for search by meaning. quasar runs the first one that is on the drive, and the boot test
 # runs this one too. nomic wants a word in front of each text that says which side of a search it is on
 
 [[embedding]]

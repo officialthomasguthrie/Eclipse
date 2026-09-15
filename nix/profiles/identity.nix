@@ -1,5 +1,5 @@
-# what the system calls itself and how it greets. os-release and lsb-release say Rift, the
-# logo in characters heads every text console, and fastfetch shows it in the first shell of a session
+# what the system calls itself and how it greets. os-release and lsb-release say Rift, and fastfetch
+# shows the logo in characters in the first shell of a session, where the terminal has room for it
 {
   config,
   lib,
@@ -10,7 +10,7 @@
 let
   version = config.system.image.version;
   home = "https://github.com/officialthomasguthrie/Rift";
-  logo = import ../totality/logo { inherit lib; };
+  logo = import ../liftoff/logo { inherit lib; };
   # the logo is text and the modules below are all fastfetch shows, so its image, sound, X11 and
   # desktop settings libraries stay out of the image
   fastfetch = pkgs.fastfetch.override {

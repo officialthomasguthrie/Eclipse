@@ -1,7 +1,7 @@
 //! The OS commands: `wifi`, `display`, `volume`, `power`. Each one is planned as a program
-//! with arguments and run as that program, never through a shell. Corona's field and the rift
+//! with arguments and run as that program, never through a shell. Lens's field and the rift
 //! command both plan them here. The system tools do the work for now: nmcli, brightnessctl,
-//! wpctl, systemctl and umbra's own ipc. The D-Bus calls the decision record asks for come with
+//! wpctl, systemctl and horizon's own ipc. The D-Bus calls the decision record asks for come with
 //! the services that will answer them.
 
 use std::process::Command;
@@ -122,7 +122,7 @@ fn display(args: &[&str]) -> Result<Action, &'static str> {
             ))
         }
         ["outputs"] => Ok(Action::read(
-            "umbra",
+            "horizon",
             &["msg", "outputs"],
             "List the displays",
         )),

@@ -106,6 +106,6 @@ in
   environment.etc."machine-id".source = "/var/lib/rift/machine-id";
   systemd.tmpfiles.rules = [
     "d /var/lib/rift 0755 root root -"
-    "d /var/lib/rift/aura 0750 root root -"
+    "d /var/lib/rift/quasar 0750 root root -"
   ];
 }

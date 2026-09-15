@@ -1,5 +1,5 @@
-# phase 0 plus the first of phase 1: console, shell, splash, aura's backend if a model is there,
-# umbra on tty1 and corona's panel on it. the serial console keeps its autologin shell, the boot test talks to it.
+# phase 0 plus the first of phase 1: console, shell, splash, quasar's backend if a model is there,
+# horizon on tty1 and lens's panel on it. the serial console keeps its autologin shell, the boot test talks to it.
 { config, pkgs, ... }:
 {
   boot.kernelParams = [
@@ -48,16 +48,16 @@
     MaxLevelConsole = "info";
   };
 
-  rift.totality.enable = true;
-  rift.syzygy.enable = true;
-  # aurad picks the model for the tier. the boot test copies only the test model into @models,
+  rift.liftoff.enable = true;
+  rift.orbit.enable = true;
+  # quasard picks the model for the tier. the boot test copies only the test model into @models,
   # so that is what runs there
-  rift.aura.enable = true;
-  rift.umbra.enable = true;
-  rift.corona.enable = true;
+  rift.quasar.enable = true;
+  rift.horizon.enable = true;
+  rift.lens.enable = true;
   # bwrap for rift run --sandbox, and flatpak with its portals
-  rift.penumbra.enable = true;
-  rift.penumbra.flatpak.enable = true;
+  rift.airlock.enable = true;
+  rift.airlock.flatpak.enable = true;
   rift.vault.enable = true;
 
   environment.etc."rift/phase".text = "0\n";

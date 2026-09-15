@@ -20,12 +20,12 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      # corona's panel links the wayland client library and xkbcommon, the lock screen pam
+      # lens's panel links the wayland client library and xkbcommon, the lock screen pam
       - run: sudo apt-get install -y --no-install-recommends libwayland-dev libxkbcommon-dev libpam0g-dev >/dev/null
       - run: cargo fmt --all --check
-      # the umbra crates need the compositor's system libraries, the nix job builds those
-      - run: cargo clippy --workspace --exclude umbra --exclude niri-config --exclude niri-ipc --all-targets -- -D warnings
-      - run: cargo test --workspace --exclude umbra --exclude niri-config --exclude niri-ipc
+      # the horizon crates need the compositor's system libraries, the nix job builds those
+      - run: cargo clippy --workspace --exclude horizon --exclude niri-config --exclude niri-ipc --all-targets -- -D warnings
+      - run: cargo test --workspace --exclude horizon --exclude niri-config --exclude niri-ipc
       - run: cargo build --release -p rift-flash --bin rift-flash -p rift-flash-app --bin rift-flash-app
       - name: Take a picture of the rift-flash app
         # under a virtual X display. the runner has no stick, so the app lists none, and quits
@@ -531,7 +531,7 @@ jobs:
           printf 'rift-test' > pass.txt
           # the vm app writes the image onto a drive in a file with rift-flash and boots that
           python3 tools/boot-test.py vm/bin/rift-vm rift.raw.zst pass.txt --models models/cache \
-            --exchange 1G --log serial.log --splash splash.png --desktop desktop.png --corona \
+            --exchange 1G --log serial.log --splash splash.png --desktop desktop.png --lens \
             --updates updates.img --backup backup.img --clone clone.img --flatpak test-flatpak --timeout 1500
       - name: Boot a drive that makes persist at its first boot
         # rift-flash leaves persist out, the way it writes a drive on macos and windows. the drive

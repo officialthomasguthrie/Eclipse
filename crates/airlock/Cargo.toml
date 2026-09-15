@@ -1,0 +1,30 @@
+[package]
+name = "airlock"
+description = "Airlock: app sandboxing and permissions broker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "airlock"
+path = "src/main.rs"
+
+[dependencies]
+# a sandbox asks airlock about its app's network through librift, and airlock serve answers
+librift = { workspace = true, features = ["bus"] }
+zbus = { version = "5.18", default-features = false, features = ["async-io", "blocking-api"] }
+# whether it was started as root, without unsafe code
+rustix = { version = "1.1", default-features = false, features = ["process", "std"] }
+
+# inside the sandbox: Landlock rules and a seccomp filter, through crates that keep the unsafe calls
+# to themselves. libc for the system call numbers
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4.7"
+seccompiler = "0.5"
+libc = "0.2.189"
+
+[lints]
+workspace = true

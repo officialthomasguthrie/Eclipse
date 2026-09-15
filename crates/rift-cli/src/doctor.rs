@@ -6,8 +6,8 @@ use std::fmt::Write as _;
 use std::fs;
 use std::process::{Command, ExitCode};
 
-use librift::aura::{self, Status};
-use librift::{paths, syzygy};
+use librift::quasar::{self, Status};
+use librift::{orbit, paths};
 
 use crate::text;
 
@@ -72,11 +72,13 @@ pub fn run(args: &[String]) -> ExitCode {
     }
     let mountinfo = read("/proc/self/mountinfo");
     let checks = [
-        Check::new("Syzygy", syzygy_verdict()),
+        Check::new("Orbit", orbit_verdict()),
         Check::new(
-            "Aura",
-            aura::status()
-                .map_or_else(|why| (Verdict::Failed, why), |status| aura_verdict(&status)),
+            "Quasar",
+            quasar::status().map_or_else(
+                |why| (Verdict::Failed, why),
+                |status| quasar_verdict(&status),
+            ),
         ),
         Check::new(
             "Persist",
@@ -144,8 +146,8 @@ fn report(checks: &[Check]) -> String {
     out
 }
 
-fn syzygy_verdict() -> (Verdict, String) {
-    match syzygy::host() {
+fn orbit_verdict() -> (Verdict, String) {
+    match orbit::host() {
         Ok(host) => (
             Verdict::Passed,
             format!(
@@ -159,7 +161,7 @@ fn syzygy_verdict() -> (Verdict, String) {
     }
 }
 
-fn aura_verdict(status: &Status) -> (Verdict, String) {
+fn quasar_verdict(status: &Status) -> (Verdict, String) {
     let model = if status.tier.is_empty() {
         status.model.clone()
     } else {
@@ -179,7 +181,7 @@ fn aura_verdict(status: &Status) -> (Verdict, String) {
         "failed" => (Verdict::Failed, error("The model stopped")),
         other => (
             Verdict::Failed,
-            format!("Aura says its state is {other}, which this program does not know"),
+            format!("Quasar says its state is {other}, which this program does not know"),
         ),
     }
 }
@@ -576,7 +578,7 @@ Buffers:            2040 kB
     }
 
     #[test]
-    fn aura_is_ready_or_says_why_not() {
+    fn quasar_is_ready_or_says_why_not() {
         let status = |state: &str, error: &str| Status {
             state: state.into(),
             model: "qwen3-0.6b-q8_0".into(),
@@ -585,15 +587,15 @@ Buffers:            2040 kB
             ..Status::default()
         };
         assert_eq!(
-            aura_verdict(&status("ready", "")),
+            quasar_verdict(&status("ready", "")),
             (
                 Verdict::Passed,
                 "Ready, qwen3-0.6b-q8_0 for tier small".to_string()
             )
         );
-        assert_eq!(aura_verdict(&status("loading", "")).0, Verdict::Warning);
+        assert_eq!(quasar_verdict(&status("loading", "")).0, Verdict::Warning);
         assert_eq!(
-            aura_verdict(&status(
+            quasar_verdict(&status(
                 "none",
                 "No chat model that fits this machine is on the drive."
             )),
@@ -602,22 +604,22 @@ Buffers:            2040 kB
                 "No chat model that fits this machine is on the drive.".to_string()
             )
         );
-        assert_eq!(aura_verdict(&status("failed", "")).0, Verdict::Failed);
-        assert_eq!(aura_verdict(&status("asleep", "")).0, Verdict::Failed);
+        assert_eq!(quasar_verdict(&status("failed", "")).0, Verdict::Failed);
+        assert_eq!(quasar_verdict(&status("asleep", "")).0, Verdict::Failed);
     }
 
     #[test]
     fn the_report_is_rows_and_a_count() {
         let checks = [
             Check::new(
-                "Syzygy",
+                "Orbit",
                 (
                     Verdict::Passed,
                     "On the bus, host 5297c0f65d6a, class borrowed, AI tier small".into(),
                 ),
             ),
             Check::new(
-                "Aura",
+                "Quasar",
                 (
                     Verdict::Warning,
                     "Loading qwen3-0.6b-q8_0 for tier small".into(),
@@ -630,8 +632,8 @@ Buffers:            2040 kB
         ];
         assert_eq!(
             report(&checks),
-            "Syzygy        Passed   On the bus, host 5297c0f65d6a, class borrowed, AI tier small\n\
-             Aura          Warning  Loading qwen3-0.6b-q8_0 for tier small\n\
+            "Orbit         Passed   On the bus, host 5297c0f65d6a, class borrowed, AI tier small\n\
+             Quasar        Warning  Loading qwen3-0.6b-q8_0 for tier small\n\
              System image  Failed   Nothing is mounted at /usr\n\
              \n\
              3 checks, 1 passed, 1 warning, 1 failed.\n"

@@ -3,7 +3,7 @@
 runs this.
 
 Usage: boot-test.py <rift-vm> <image> <passfile> [--models dir] [--exchange size] [--timeout 600]
-       [--log serial.log] [--splash splash.png] [--desktop desktop.png] [--corona] [--updates updates.img]
+       [--log serial.log] [--splash splash.png] [--desktop desktop.png] [--lens] [--updates updates.img]
        [--backup backup.img] [--clone clone.img] [--first-boot]
 
 With --first-boot rift-flash writes the drive without persist, the way it writes one on macOS and
@@ -19,7 +19,7 @@ passphrase: the same uuids, machine id, key slots and partitions. The test ends 
 .raw.zst, onto a drive in a file with rift-flash (through sudo), with the passphrase from the passfile
 for persist, then boots the drive as an nvme drive. Everything goes through the serial console: the luks prompt,
 the autologin shell, a few commands, the default apps on the path, the a/b slots, the host profile
-syzygy wrote and what `rift host` and `rift doctor` print. The serial output is printed as it
+orbit wrote and what `rift host` and `rift doctor` print. The serial output is printed as it
 arrives and kept in the log file.
 
 Timeline: the test takes a snapshot of home with `rift snapshot take`, changes one file and
@@ -70,26 +70,26 @@ and systemd-boot has taken one more try off its uki: +2-1, +1-2, +0-3. The fourt
 slot b again, and sysupdate still lists broken as installed.
 
 With --models the files in that directory go into the @models subvolume before boot. The test waits
-on the system bus until aurad has loaded the model it picked for syzygy's tier, checks that it is the
-one in the directory, asks the local api for a short completion and asks aura a question over the bus
+on the system bus until quasard has loaded the model it picked for orbit's tier, checks that it is the
+one in the directory, asks the local api for a short completion and asks quasar a question over the bus
 and through `rift ai`.
 The local api has to refuse the same completion when the request comes with a web page's Origin or
 Host header, and the owner must not reach llama-server's socket behind it.
 
 With --splash the test also takes a screendump through the qemu monitor while the luks prompt is up
-and checks that the Totality splash is on screen: the light disc and the black disc from
-nix/totality/plymouth against the gray background. The dump is saved as a png.
+and checks that the Liftoff splash is on screen: the light disc and the black disc from
+nix/liftoff/plymouth against the gray background. The dump is saved as a png.
 
-With --desktop the test checks that greetd is up and takes a screendump of the running session: umbra
+With --desktop the test checks that greetd is up and takes a screendump of the running session: horizon
 paints its background gray over the whole screen, a console would show black with text. The vm has a
-virtio gpu for this, umbra renders on it in software.
+virtio gpu for this, horizon renders on it in software.
 
-With --corona the desktop check expects corona's panel along the top of that screen: umbra reports a
+With --lens the desktop check expects lens's panel along the top of that screen: horizon reports a
 layer surface with its namespace, and the screendump has the panel gray, the field inside it and the
-desktop gray below. The test then types into the field from the serial shell with `corona --enter`
+desktop gray below. The test then types into the field from the serial shell with `lens --enter`
 and looks again: a nushell pipeline puts three rows under the field, a command with arguments it does
-not know puts an error line there, and `corona --escape` leaves the panel the height it started at.
-With --models as well, a question goes through `corona --do`, which prints aura's answer, and then
+not know puts an error line there, and `lens --escape` leaves the panel the height it started at.
+With --models as well, a question goes through `lens --do`, which prints quasar's answer, and then
 into the field, where the answer shows up as rows under it.
 """
 
@@ -223,14 +223,14 @@ def write_png(path, width, height, rgb):
         f.write(chunk(b"IEND", b""))
 
 
-# what the theme draws, from nix/totality/plymouth: background #1e1e1e, sun #cccccc, moon #000000
+# what the theme draws, from nix/liftoff/plymouth: background #1e1e1e, sun #cccccc, moon #000000
 BACKGROUND = (30, 30, 30)
 SUN = (204, 204, 204)
 MOON = (0, 0, 0)
 RING = 0.03
-# what umbra paints with no window open, the background from nix/modules/umbra.nix
+# what horizon paints with no window open, the background from nix/modules/horizon.nix
 DESKTOP = (36, 36, 36)
-# corona's panel, from crates/corona/src/ui.rs: panel gray, field gray, and the sizes in logical
+# lens's panel, from crates/lens/src/ui.rs: panel gray, field gray, and the sizes in logical
 # pixels. the panel is the field's row plus whatever the result list and the error line need
 PANEL = (30, 30, 30)
 FIELD = (46, 46, 46)
@@ -240,18 +240,18 @@ ROW_HEIGHT = 22
 ERROR_HEIGHT = 22
 BOTTOM_PAD = 4
 LIST_ROWS = 8
-# what the field and the list ask corona to type, and how many rows the pipeline prints
+# what the field and the list ask lens to type, and how many rows the pipeline prints
 RESULT_LINE = "echo [rift rift rift]"
 RESULT_ROWS = 3
 ERROR_LINE = "wifi dance"
-# a question with a short answer. the model runs on the cpu, next to umbra's software renderer
+# a question with a short answer. the model runs on the cpu, next to horizon's software renderer
 QUESTION = "What is the capital of France?"
-# the console, from nix/modules/umbra.nix: ghostty's background, the height the window rule gives
+# the console, from nix/modules/horizon.nix: ghostty's background, the height the window rule gives
 # the window in logical pixels, and the app id the bind shows and hides
 CONSOLE = (4, 4, 6)
 CONSOLE_HEIGHT = 400
 CONSOLE_APP_ID = "dev.rift.Console"
-# the lock screen, from crates/umbra-lock/src/draw.rs: its gray, the inside of the field, the ring
+# the lock screen, from crates/horizon-lock/src/draw.rs: its gray, the inside of the field, the ring
 # around it, the sentence for a refused password, and the field's size in logical pixels
 LOCK = (30, 30, 30)
 LOCK_FIELD = (46, 46, 46)
@@ -326,13 +326,13 @@ def check_splash(width, height, rgb):
 
 
 def panel_height(rows, error):
-    """How tall corona's panel is with this many result rows and with or without the error line."""
+    """How tall lens's panel is with this many result rows and with or without the error line."""
     under = rows * ROW_HEIGHT + (ERROR_HEIGHT if error else 0)
     return PANEL_HEIGHT + under + BOTTOM_PAD if under else PANEL_HEIGHT
 
 
-def check_desktop(width, height, rgb, corona=False, rows=0, error=False):
-    """Count the desktop gray and the console's black in a screendump, and with corona the panel
+def check_desktop(width, height, rgb, lens=False, rows=0, error=False):
+    """Count the desktop gray and the console's black in a screendump, and with lens the panel
     along the top, the field in it and the result list under it. rows is a count, or (fewest, most)
     when the test cannot know how many rows there are: then any count in that range that fits the
     screen passes. Returns (ok, lines to print)."""
@@ -360,7 +360,7 @@ def check_desktop(width, height, rgb, corona=False, rows=0, error=False):
     checks = [
         ("no console black", black <= 0.02 * total, f"{black} of {total}"),
     ]
-    if corona:
+    if lens:
         below = total - panel_rows * width
 
         def panel_checks(count):
@@ -393,7 +393,7 @@ def check_desktop(width, height, rgb, corona=False, rows=0, error=False):
 
 
 # the logo in characters
-LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "nix", "totality", "logo", "rift-logo.txt")
+LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "nix", "liftoff", "logo", "rift-logo.txt")
 # a text console draws with the kernel's 8 by 16 font and palette: gray text on black
 TTY_GRAY = (170, 170, 170)
 TTY_CELL = (8, 16)
@@ -411,7 +411,7 @@ def ice(px):
 
 
 def check_console(width, height, rgb):
-    """Find the console in a screendump: corona's panel along the top, under it a run of rows that
+    """Find the console in a screendump: lens's panel along the top, under it a run of rows that
     are mostly the console's background, and the desktop under that. The terminal shows fish's
     greeting from its first line down: fastfetch's rows alone, as the console is too short for the
     whole logo beside them. Returns (ok, lines to print)."""
@@ -518,7 +518,7 @@ def check_tty(width, height, rgb):
 
 def check_lock(width, height, rgb, refused=False):
     """Find the lock screen in a screendump: its gray over the whole screen, the field in the middle
-    with the blue ring around it, and none of the desktop, corona's panel or the console. With
+    with the blue ring around it, and none of the desktop, lens's panel or the console. With
     refused, the red sentence is under the field, without it there is none. Returns (ok, lines to
     print)."""
     ground = desktop = console = ring = red = field = 0
@@ -548,7 +548,7 @@ def check_lock(width, height, rgb, refused=False):
             left, right = min(left, row_left), max(right, row_right)
             top, bottom = min(top, y), max(bottom, y)
     total = width * height
-    # the inside of the field is the field less its ring. corona's field would stretch the box to
+    # the inside of the field is the field less its ring. lens's field would stretch the box to
     # the top of the screen
     inner = (LOCK_FIELD_SIZE[0] - 2 * LOCK_RING, LOCK_FIELD_SIZE[1] - 2 * LOCK_RING)
     box = (right - left + 1, bottom - top + 1) if right >= 0 else (0, 0)
@@ -604,20 +604,20 @@ def main():
     ap.add_argument("vm", help="the rift-vm program from nix build .#vm")
     ap.add_argument("image", help="the image, .raw or .raw.zst, that rift-flash writes onto the drive the vm boots")
     ap.add_argument("passfile")
-    ap.add_argument("--models", help="directory with gguf files for the models subvolume, enables the aura check")
+    ap.add_argument("--models", help="directory with gguf files for the models subvolume, enables the quasar check")
     ap.add_argument("--exchange", help="give the drive an exchange partition of this size, like 1G, and check it")
     ap.add_argument("--first-boot", action="store_true", help="write the drive without persist, choose the passphrase "
                     "at its first boot, check what it made and boot it again")
     ap.add_argument("--timeout", type=int, default=600, help="seconds for the whole test")
-    ap.add_argument("--aura-timeout", type=int, default=120, help="seconds for aura to load the model")
-    ap.add_argument("--answer-timeout", type=int, default=240, help="seconds for aura's answer to reach the field")
+    ap.add_argument("--quasar-timeout", type=int, default=120, help="seconds for quasar to load the model")
+    ap.add_argument("--answer-timeout", type=int, default=240, help="seconds for quasar's answer to reach the field")
     ap.add_argument("--log", default="serial.log")
     ap.add_argument("--memory", default="4096")
     ap.add_argument("--qmp", help="unix socket for the qemu monitor")
     ap.add_argument("--splash", help="take a screendump at the luks prompt, check it, save it as this png")
     ap.add_argument("--desktop", help="take a screendump of the session, check it, save it as this png")
-    ap.add_argument("--desktop-timeout", type=int, default=60, help="seconds for umbra to paint its first frame")
-    ap.add_argument("--corona", action="store_true", help="expect corona's panel on the desktop")
+    ap.add_argument("--desktop-timeout", type=int, default=60, help="seconds for horizon to paint its first frame")
+    ap.add_argument("--lens", action="store_true", help="expect lens's panel on the desktop")
     ap.add_argument("--updates", help="an ext4 image labelled updates with a newer version's update files, "
                     "install them and reboot into that version")
     ap.add_argument("--backup", help="an empty ext4 image labelled backup, back up home onto it and restore from it")
@@ -634,7 +634,7 @@ def main():
         args.qmp = os.path.join(work, "qmp.sock")
 
     # the app picks kvm or tcg and the firmware. what follows its options replaces its defaults.
-    # the gpu is virtio: the firmware draws the splash on it and umbra opens it as a drm device.
+    # the gpu is virtio: the firmware draws the splash on it and horizon opens it as a drm device.
     # with --first-boot rift-flash leaves persist out and the drive asks for the passphrase
     drive = ["--first-boot"] if args.first_boot else ["--persist", os.path.abspath(args.passfile)]
     if args.models:
@@ -891,7 +891,7 @@ def main():
         loader = started_by_systemd_boot(uki)
 
         if counted:
-            # the boot is marked good once syzygy and greetd are up, a little after the shell
+            # the boot is marked good once orbit and greetd are up, a little after the shell
             deadline = time.monotonic() + 120
             while True:
                 state = unit_state("systemd-bless-boot")
@@ -1147,15 +1147,15 @@ def main():
         print(f"\nboot-test: PASSED in {since()}", flush=True)
         return
 
-    # 3. syzygy: the profile it wrote into @hosts, and the same answers on the system bus.
+    # 3. orbit: the profile it wrote into @hosts, and the same answers on the system bus.
     # fish puts a bare \r before a command's output, so these anchor on the whitespace after the
     # value, not before it
-    child.send("systemctl is-active syzygy\r")
-    expect([r"(?<![\w-])(active|inactive|failed|activating)\s"], "the syzygy unit state")
+    child.send("systemctl is-active orbit\r")
+    expect([r"(?<![\w-])(active|inactive|failed|activating)\s"], "the orbit unit state")
     state = child.match.group(1)
     expect([PROMPT], "the prompt")
     if state != "active":
-        fail(f"syzygy.service is {state}, expected active")
+        fail(f"orbit.service is {state}, expected active")
 
     hosts = "/var/lib/rift/hosts"
     child.send(f"cat {hosts}/current\r")
@@ -1207,7 +1207,7 @@ def main():
         fail("the profile writes a scale, but a 32 by 20 cm 1280x800 panel is about 102 dpi")
 
     # the bus. the interface is read only, so the owner reads it without sudo
-    bus, obj = "dev.rift.Syzygy", "/dev/rift/Syzygy"
+    bus, obj = "dev.rift.Orbit", "/dev/rift/Orbit"
     if count("bus", f"busctl --system list --no-pager --no-legend | grep -c '^{bus}'") != 1:
         fail(f"{bus} is not on the system bus")
 
@@ -1267,33 +1267,33 @@ def main():
             fail(f"rift host says {label} {rows.get(label)!r}, the bus says {value!r}")
     ok(f"rift host printed fingerprint {fingerprint[:12]} and ai tier {ai_tier}, as the bus did")
 
-    # 4. aura. aurad reads the tier from syzygy, picks a model that is on the drive, runs
+    # 4. quasar. quasard reads the tier from orbit, picks a model that is on the drive, runs
     # llama-server as its child and answers on the system bus. the name is there before the model
     # has loaded, so poll the State property
     if args.models:
-        _, output = run("systemctl is-active aura", "the aura unit state")
+        _, output = run("systemctl is-active quasar", "the quasar unit state")
         state = re.search(r"(?<![\w-])(active|inactive|failed|activating)\s", output)
         state = state.group(1) if state else output.strip()
         if state not in ("active", "activating"):
-            fail(f"aura.service is {state}, expected active")
+            fail(f"quasar.service is {state}, expected active")
 
-        aura, aura_path = "dev.rift.Aura", "/dev/rift/Aura"
+        quasar, quasar_path = "dev.rift.Quasar", "/dev/rift/Quasar"
 
-        def aura_prop(name):
-            """A string property of aura's, or None when the bus gave no answer."""
-            status, output = run(f"busctl --system get-property {aura} {aura_path} {aura} {name}",
-                                 f"aura's {name} property")
+        def quasar_prop(name):
+            """A string property of quasar's, or None when the bus gave no answer."""
+            status, output = run(f"busctl --system get-property {quasar} {quasar_path} {quasar} {name}",
+                                 f"quasar's {name} property")
             value = re.search(r's "([^"\n]*)"', output)
             return value.group(1) if status == 0 and value else None
 
-        aura_deadline = time.monotonic() + args.aura_timeout
+        quasar_deadline = time.monotonic() + args.quasar_timeout
         while True:
-            aura_state = aura_prop("State")
-            if aura_state == "ready":
+            quasar_state = quasar_prop("State")
+            if quasar_state == "ready":
                 break
-            if aura_state in ("none", "failed") or time.monotonic() > aura_deadline:
-                why = aura_prop("Error")
-                fail(f"aura is {aura_state or 'not on the bus'} after {since()}: {why}")
+            if quasar_state in ("none", "failed") or time.monotonic() > quasar_deadline:
+                why = quasar_prop("Error")
+                fail(f"quasar is {quasar_state or 'not on the bus'} after {since()}: {why}")
             time.sleep(5)
 
         # the only model on the drive is the one in --models, and the manifest says which id it is
@@ -1302,20 +1302,20 @@ def main():
             chat = tomllib.load(f)["chat"]
         on_drive = set(os.listdir(args.models))
         wanted_model = [m["id"] for m in chat if m["file"] in on_drive]
-        aura_tier = aura_prop("Tier")
-        aura_model = aura_prop("Model")
-        ok(f"aura loaded {aura_model} for tier {aura_tier}")
-        if aura_tier != ai_tier:
-            fail(f"aura says the tier is {aura_tier}, syzygy says {ai_tier}")
-        if [aura_model] != wanted_model:
-            fail(f"aura runs {aura_model}, the models on the drive are {wanted_model}")
+        quasar_tier = quasar_prop("Tier")
+        quasar_model = quasar_prop("Model")
+        ok(f"quasar loaded {quasar_model} for tier {quasar_tier}")
+        if quasar_tier != ai_tier:
+            fail(f"quasar says the tier is {quasar_tier}, orbit says {ai_tier}")
+        if [quasar_model] != wanted_model:
+            fail(f"quasar runs {quasar_model}, the models on the drive are {wanted_model}")
 
         # the local api that other programs use is the same server
         api = "localhost:11434"
-        _, output = run(f"curl -s -o /dev/null -w 'health=%{{http_code}}\\n' {api}/health", "the aura health code")
+        _, output = run(f"curl -s -o /dev/null -w 'health=%{{http_code}}\\n' {api}/health", "the quasar health code")
         code = re.search(r"health=(\d{3})", output)
         if not code or code.group(1) != "200":
-            fail(f"the local api says {output.strip()!r} on /health, but aura says the model is ready")
+            fail(f"the local api says {output.strip()!r} on /health, but quasar says the model is ready")
 
         body = '{"prompt":"The capital of France is","n_predict":4}'
         _, output = run(f"curl -s {api}/completion -d '{body}'", "a completion")
@@ -1326,7 +1326,7 @@ def main():
 
         # a web page cannot use it. a browser sends an Origin header with anything a page asks
         # for, and a page that points its own name at 127.0.0.1 sends that name as the Host. the
-        # model's socket behind the api is aura's alone
+        # model's socket behind the api is quasar's alone
         def api_code(options, what):
             _, output = run(f"curl -s -o /dev/null -w 'code=%{{http_code}}\\n' {options}", what)
             code = re.search(r"code=(\d{3})", output)
@@ -1339,63 +1339,63 @@ def main():
             code = api_code(f"-H '{header}' {api}/completion -d '{body}'", what)
             if code != "403":
                 fail(f"the local api answered {what} with {code}, expected 403")
-        code = api_code("--unix-socket /run/aura/llama.sock http://localhost/health", "llama-server's socket")
+        code = api_code("--unix-socket /run/quasar/llama.sock http://localhost/health", "llama-server's socket")
         if code != "000":
             fail(f"the owner reached llama-server's socket without the local api, it said {code}")
-        ok("the local api refuses web pages, and only aura opens the model's socket")
+        ok("the local api refuses web pages, and only quasar opens the model's socket")
 
         # and the question over the bus, as the owner, no sudo. Ask returns a kind and a text, and
         # busctl's json keeps both on one line with their quotes escaped
-        _, output = run(f"busctl --system --json=short --timeout=240 call {aura} {aura_path} {aura} Ask s '{QUESTION}'",
-                        "aura's answer on the bus")
+        _, output = run(f"busctl --system --json=short --timeout=240 call {quasar} {quasar_path} {quasar} Ask s '{QUESTION}'",
+                        "quasar's answer on the bus")
         reply = re.search(r'"type":"ss","data":\["(\w+)","((?:[^"\\]|\\.)+)"\]\}', output)
         if not reply:
             fail(f"Ask on the bus gave no answer: {output.strip()!r}")
         kind, answer = reply.group(1), json.loads('"' + reply.group(2) + '"')
         if kind != "answer":
             fail(f"Ask on the bus said {kind} {answer!r} to {QUESTION!r}, expected an answer")
-        ok(f"aura answered {QUESTION!r} on the bus with {answer!r}")
+        ok(f"quasar answered {QUESTION!r} on the bus with {answer!r}")
 
         # 4a. the same question through `rift ai`, which prints the answer, and `rift ai`
         # without one, which prints the properties the bus just gave
-        status, printed = run(f'rift ai "{QUESTION}"', "aura's answer through rift ai")
+        status, printed = run(f'rift ai "{QUESTION}"', "quasar's answer through rift ai")
         printed = without_console(printed)
         print(f'\nboot-test: rift ai "{QUESTION}" printed:\n{printed}', flush=True)
         if status != 0 or "paris" not in printed.lower():
             fail(f"rift ai exited with {status} and did not say Paris")
         ok(f"rift ai answered {printed!r}")
 
-        status, printed = run("rift ai", "aura's state through rift ai")
+        status, printed = run("rift ai", "quasar's state through rift ai")
         printed = without_console(printed)
         print(f"\nboot-test: rift ai printed:\n{printed}", flush=True)
         rows = dict(re.findall(r"^(State|Model|Tier):[ \t]+(.*?)[ \t]*$", printed, re.M))
-        wanted = {"State": "ready", "Model": aura_model, "Tier": aura_tier}
+        wanted = {"State": "ready", "Model": quasar_model, "Tier": quasar_tier}
         if status != 0 or rows != wanted:
             fail(f"rift ai says {rows}, the bus says {wanted}")
         ok("rift ai printed the state, model and tier the bus gave")
 
-        # 4c. search by meaning. aurad runs the embedding model beside the chat model, and the owner's
-        # user manager has a unit that walks home, gets a vector for each part of a file from aura and
-        # keeps them in the owner's cache. aura never reads home. a search finds a file by what it
+        # 4c. search by meaning. quasard runs the embedding model beside the chat model, and the owner's
+        # user manager has a unit that walks home, gets a vector for each part of a file from quasar and
+        # keeps them in the owner's cache. quasar never reads home. a search finds a file by what it
         # means, with none of its words
-        embedding_deadline = time.monotonic() + args.aura_timeout
+        embedding_deadline = time.monotonic() + args.quasar_timeout
         while True:
-            embedding_state = aura_prop("EmbeddingState")
+            embedding_state = quasar_prop("EmbeddingState")
             if embedding_state == "ready":
                 break
             if embedding_state in ("none", "failed") or time.monotonic() > embedding_deadline:
-                why = aura_prop("EmbeddingError")
-                fail(f"aura's embedding model is {embedding_state or 'not on the bus'} after {since()}: {why}")
+                why = quasar_prop("EmbeddingError")
+                fail(f"quasar's embedding model is {embedding_state or 'not on the bus'} after {since()}: {why}")
             time.sleep(5)
         with open(manifest_path, "rb") as f:
             embedding = tomllib.load(f)["embedding"][0]["id"]
-        if aura_prop("EmbeddingModel") != embedding:
-            fail(f"aura runs {aura_prop('EmbeddingModel')} for search, the manifest's embedding model is {embedding}")
+        if quasar_prop("EmbeddingModel") != embedding:
+            fail(f"quasar runs {quasar_prop('EmbeddingModel')} for search, the manifest's embedding model is {embedding}")
         status, printed = run("rift ai", "the search row of rift ai")
         printed = without_console(printed)
         if status != 0 or not re.search(rf"^Search:[ \t]+ready, {re.escape(embedding)}[ \t]*$", printed, re.M):
             fail(f"rift ai does not say search is ready with {embedding}: {printed!r}")
-        ok(f"aura loaded {embedding} for search by meaning")
+        ok(f"quasar loaded {embedding} for search by meaning")
 
         notes = "/home/rift/notes"
         documents = {
@@ -1422,14 +1422,14 @@ def main():
                 fail(f"{notes}/{name} could not be written: {without_console(output).strip()!r}")
 
         # the timer's unit, started now instead of ten minutes after login. start waits for a oneshot
-        status, output = run("systemctl --user start aura-index.service", "the index of home")
+        status, output = run("systemctl --user start quasar-index.service", "the index of home")
         if status != 0:
-            fail(f"aura-index.service did not start: {without_console(output).strip()!r}")
-        _, output = run("systemctl --user show --property=Result,ExecMainStatus,ConditionResult aura-index.service | cat",
+            fail(f"quasar-index.service did not start: {without_console(output).strip()!r}")
+        _, output = run("systemctl --user show --property=Result,ExecMainStatus,ConditionResult quasar-index.service | cat",
                         "how the index unit ended")
         shown = dict(re.findall(r"^(\w+)=(\S*)\s*$", without_console(output), re.M))
         if shown.get("Result") != "success" or shown.get("ExecMainStatus") != "0" or shown.get("ConditionResult") != "yes":
-            fail(f"aura-index.service ended with {shown}")
+            fail(f"quasar-index.service ended with {shown}")
         _, output = run("stat -c 'index=%U:%a' ~/.cache/rift ~/.cache/rift/search.index", "the index's owner")
         modes = re.findall(r"index=(\w+:\d+)", output)
         if modes != ["rift:700", "rift:600"]:
@@ -1457,22 +1457,22 @@ def main():
         ok("rift ai search found " + " and ".join(f"{name} for {words!r}" for words, name in searches.items())
            + ", by meaning")
 
-    # 4b. `rift doctor`: no check fails, and syzygy and aura each have a row. with the model
-    # loaded, aura's row has to pass
+    # 4b. `rift doctor`: no check fails, and orbit and quasar each have a row. with the model
+    # loaded, quasar's row has to pass
     status, printed = run("rift doctor", "rift doctor")
     printed = without_console(printed)
     print(f"\nboot-test: rift doctor printed:\n{printed}", flush=True)
-    rows = dict(re.findall(r"^(Syzygy|Aura|Persist|Memory|CPU|IO|System image)[ \t]+(Passed|Warning|Failed)[ \t]",
+    rows = dict(re.findall(r"^(Orbit|Quasar|Persist|Memory|CPU|IO|System image)[ \t]+(Passed|Warning|Failed)[ \t]",
                            printed, re.M))
     if status != 0:
         fail(f"rift doctor exited with {status}")
-    if rows.get("Syzygy") != "Passed":
-        fail(f"rift doctor says Syzygy {rows.get('Syzygy')}, expected Passed")
-    if "Aura" not in rows or (args.models and rows["Aura"] != "Passed"):
-        fail(f"rift doctor says Aura {rows.get('Aura')}, expected Passed")
+    if rows.get("Orbit") != "Passed":
+        fail(f"rift doctor says Orbit {rows.get('Orbit')}, expected Passed")
+    if "Quasar" not in rows or (args.models and rows["Quasar"] != "Passed"):
+        fail(f"rift doctor says Quasar {rows.get('Quasar')}, expected Passed")
     ok("rift doctor: " + ", ".join(f"{name} {verdict}" for name, verdict in rows.items()))
 
-    # 5. the desktop. greetd runs umbra on tty1 as the owner. umbra needs a moment to open the gpu
+    # 5. the desktop. greetd runs horizon on tty1 as the owner. horizon needs a moment to open the gpu
     # and paint its first frame, so the screendump is retried until it shows the background
     if args.desktop:
         child.send("systemctl is-active greetd\r")
@@ -1497,7 +1497,7 @@ def main():
                 elif console:
                     good, lines = check_console(width, height, rgb)
                 else:
-                    good, lines = check_desktop(width, height, rgb, corona=args.corona, **shape)
+                    good, lines = check_desktop(width, height, rgb, lens=args.lens, **shape)
                 if good or time.monotonic() > deadline:
                     break
                 time.sleep(2 if shape or console or lock is not None else 5)
@@ -1512,44 +1512,44 @@ def main():
 
         look("desktop", args.desktop, args.desktop_timeout)
 
-        # 5a. the compositor knows corona's surface too. the session's ipc socket is in the
+        # 5a. the compositor knows lens's surface too. the session's ipc socket is in the
         # owner's runtime directory, the serial shell runs as the owner
-        if args.corona:
-            _, output = run("set -x NIRI_SOCKET (ls -t /run/user/(id -u)/niri.wayland-1.*.sock | head -n1); umbra msg --json layers",
-                            "umbra's layer surfaces")
-            if not re.search(r'"namespace":\s*"corona"', output):
-                fail("umbra lists no layer surface named corona")
-            ok("corona panel")
+        if args.lens:
+            _, output = run("set -x NIRI_SOCKET (ls -t /run/user/(id -u)/niri.wayland-1.*.sock | head -n1); horizon msg --json layers",
+                            "horizon's layer surfaces")
+            if not re.search(r'"namespace":\s*"lens"', output):
+                fail("horizon lists no layer surface named lens")
+            ok("lens panel")
 
             # 5b. the field takes a line from the terminal, over the socket in the session's
             # runtime directory, and what the line printed lands in the list under it
             stem, extension = os.path.splitext(args.desktop)
             run("set -x XDG_RUNTIME_DIR /run/user/(id -u)", "the runtime directory")
-            run(f'corona --enter "{RESULT_LINE}"', "a pipeline typed into the field")
-            look("the result list", f"{stem}-corona{extension}", 20, rows=RESULT_ROWS)
+            run(f'lens --enter "{RESULT_LINE}"', "a pipeline typed into the field")
+            look("the result list", f"{stem}-lens{extension}", 20, rows=RESULT_ROWS)
 
-            run(f'corona --enter "{ERROR_LINE}"', "a wrong command typed into the field")
-            look("the error line", f"{stem}-corona-error{extension}", 20, rows=0, error=True)
+            run(f'lens --enter "{ERROR_LINE}"', "a wrong command typed into the field")
+            look("the error line", f"{stem}-lens-error{extension}", 20, rows=0, error=True)
 
-            run("corona --escape", "escape in the field")
-            look("the panel back at the field", f"{stem}-corona-empty{extension}", 20, rows=0)
+            run("lens --escape", "escape in the field")
+            look("the panel back at the field", f"{stem}-lens-empty{extension}", 20, rows=0)
 
             # 5c. the console. Mod+Grave runs toggle-console with the arguments in
-            # nix/modules/umbra.nix, and umbra msg runs the same action without the key. the first
+            # nix/modules/horizon.nix, and horizon msg runs the same action without the key. the first
             # time it starts ghostty, after that it hides and shows that same window
             status, printed = run("ghostty +validate-config", "ghostty's settings")
             printed = without_console(printed).strip()
             if status != 0 or printed:
                 fail(f"ghostty does not take the settings file the image writes: {printed!r}")
-            toggle = (f"umbra msg action toggle-console --app-id {CONSOLE_APP_ID} -- "
+            toggle = (f"horizon msg action toggle-console --app-id {CONSOLE_APP_ID} -- "
                       f"systemd-cat -t console ghostty --class={CONSOLE_APP_ID}")
 
             def console_window():
-                """(id, pid) of the console's window in umbra's list, or None when it is not there."""
-                status, output = run("umbra msg --json windows", "umbra's windows")
+                """(id, pid) of the console's window in horizon's list, or None when it is not there."""
+                status, output = run("horizon msg --json windows", "horizon's windows")
                 output = without_console(output).replace("\n", "")
                 if status != 0 or "[" not in output:
-                    fail(f"umbra msg windows exited with {status}: {output.strip()[-300:]!r}")
+                    fail(f"horizon msg windows exited with {status}: {output.strip()[-300:]!r}")
                 window = re.search(r'\{"id":(\d+),"title":(?:null|"(?:[^"\\]|\\.)*"),"app_id":"'
                                    + re.escape(CONSOLE_APP_ID) + r'","pid":(\d+)', output)
                 return (int(window.group(1)), int(window.group(2))) if window else None
@@ -1559,10 +1559,10 @@ def main():
                 return re.findall(r"^\s*(\d+)\s*$", without_console(output), re.M)
 
             run(toggle, "the show action")
-            look("the console", f"{stem}-console{extension}", 60, console=True, journals=("console", "umbra"))
+            look("the console", f"{stem}-console{extension}", 60, console=True, journals=("console", "horizon"))
             window = console_window()
             if not window:
-                fail("umbra lists no console window after the show action")
+                fail("horizon lists no console window after the show action")
             window_id, pid = window
             programs = children(pid, "the program in the console")
             if not programs:
@@ -1573,14 +1573,14 @@ def main():
             run(toggle, "the hide action")
             look("the desktop and the panel with the console hidden", f"{stem}-console-hidden{extension}", 20, rows=0)
             if console_window():
-                fail("umbra still lists the console window after the hide action")
+                fail("horizon still lists the console window after the hide action")
             status, _ = run(f"kill -0 {shell}", "the shell in the hidden console")
             if status != 0:
                 fail(f"the console's shell {shell} ended when the console was hidden")
             ok(f"the console is hidden and its shell {shell} still runs")
 
             run(toggle, "the show action again")
-            look("the console again", f"{stem}-console-again{extension}", 20, console=True, journals=("console", "umbra"))
+            look("the console again", f"{stem}-console-again{extension}", 20, console=True, journals=("console", "horizon"))
             again = console_window()
             if again != window:
                 fail(f"the console came back as {again}, expected window {window_id} of ghostty {pid}")
@@ -1591,7 +1591,7 @@ def main():
             ok(f"the same console came back with shell {shell} and went away again")
 
             # 5e. the lock screen. logind signals the session greetd opened when it is asked to lock
-            # it, the listener umbra started runs umbra-lock, and the password goes in on the vm's
+            # it, the listener horizon started runs horizon-lock, and the password goes in on the vm's
             # keyboard through the monitor. the console is open while the session is locked and
             # has to come back as it was
             _, output = run("for s in (loginctl list-sessions --no-legend | string trim | string split -f1 ' '); "
@@ -1632,22 +1632,22 @@ def main():
                 press(*([c] for c in text), ["ret"], what=what)
 
             run(toggle, "the show action before locking")
-            look("the console before locking", f"{stem}-lock-console{extension}", 20, console=True, journals=("console", "umbra"))
+            look("the console before locking", f"{stem}-lock-console{extension}", 20, console=True, journals=("console", "horizon"))
             status, output = run(f"loginctl lock-session {session}", "loginctl lock-session")
             if status != 0:
                 fail(f"loginctl lock-session {session} exited with {status}: {without_console(output).strip()!r}")
-            look("the lock screen", f"{stem}-lock{extension}", 30, lock=False, journals=("lock", "umbra"))
+            look("the lock screen", f"{stem}-lock{extension}", 30, lock=False, journals=("lock", "horizon"))
             locked_hint("yes", "with the lock screen up")
             ok(f"loginctl locked session {session}, the lock screen covers the console and the panel")
 
             type_line(WRONG_PASSWORD, "a wrong password")
             look("the lock screen refusing a wrong password", f"{stem}-lock-refused{extension}", 30, lock=True,
-                 journals=("lock", "umbra"))
+                 journals=("lock", "horizon"))
             locked_hint("yes", "after a wrong password")
             ok("a wrong password was refused and the session stayed locked")
 
             type_line(PASSWORD, "the owner's password")
-            look("the console after unlocking", f"{stem}-lock-unlocked{extension}", 30, console=True, journals=("lock", "umbra"))
+            look("the console after unlocking", f"{stem}-lock-unlocked{extension}", 30, console=True, journals=("lock", "horizon"))
             locked_hint("no", "after the owner's password")
             if console_window() != window:
                 fail(f"the console came back as {console_window()} after unlocking, expected window {window_id} of ghostty {pid}")
@@ -1657,19 +1657,19 @@ def main():
             look("the desktop and the panel after unlocking", f"{stem}-lock-desktop{extension}", 20, rows=0)
             ok(f"the owner's password unlocked it, the console came back with shell {shell}")
 
-            # Mod+L on the same keyboard runs umbra-lock from the bind
+            # Mod+L on the same keyboard runs horizon-lock from the bind
             press(["meta_l", "l"], what="Mod+L")
-            look("the lock screen from Mod+L", f"{stem}-lock-key{extension}", 30, lock=False, journals=("lock", "umbra"))
+            look("the lock screen from Mod+L", f"{stem}-lock-key{extension}", 30, lock=False, journals=("lock", "horizon"))
             type_line(PASSWORD, "the owner's password")
             look("the desktop and the panel after unlocking again", f"{stem}-lock-desktop-again{extension}", 30, rows=0,
-                 journals=("lock", "umbra"))
+                 journals=("lock", "horizon"))
             locked_hint("no", "after unlocking the lock from Mod+L")
             ok("Mod+L locked the session and the owner's password unlocked it")
 
             # 5f. a text console. ctrl+alt+f2 moves to the second one, where logind starts a getty that
             # shows /etc/issue: the name line without the logo, and a login that asks for a name, since
             # only the serial console logs in by itself. ctrl+alt+f1 goes back to the desktop, which
-            # umbra draws again
+            # horizon draws again
             press(["ctrl", "alt", "f2"], what="ctrl+alt+f2")
             waited = time.monotonic() + 30
             while (state := unit_state("getty@tty2")) != "active":
@@ -1696,22 +1696,22 @@ def main():
                 fail("the getty on tty2 logs someone in by itself")
             ok("tty2 shows the name and a login from /etc/issue without the logo, and logs no one in by itself")
             press(["ctrl", "alt", "f1"], what="ctrl+alt+f1")
-            look("the desktop back from tty2", f"{stem}-tty2-back{extension}", 30, rows=0, journals=("umbra",))
+            look("the desktop back from tty2", f"{stem}-tty2-back{extension}", 30, rows=0, journals=("horizon",))
 
-            # 5d. a question for aura, from the terminal first, which prints the answer here, and
+            # 5d. a question for quasar, from the terminal first, which prints the answer here, and
             # then typed into the field. the answer is as many rows as the model makes it, so the
             # list is only expected to have at least one
             if args.models:
-                status, output = run(f'corona --do "{QUESTION}"', "aura's answer through corona")
+                status, output = run(f'lens --do "{QUESTION}"', "quasar's answer through lens")
                 # the journal's lines on the console land in the output too
                 said = "\n".join(line for line in output.splitlines()
                                  if line.strip() and not re.match(r"\s*\[\s*\d+\.\d+\] ", line))
                 if status != 0 or not said:
-                    fail(f"corona --do could not ask aura: {output.strip()!r}")
-                ok(f"corona asked aura and printed {said!r}")
+                    fail(f"lens --do could not ask quasar: {output.strip()!r}")
+                ok(f"lens asked quasar and printed {said!r}")
 
-                run(f'corona --enter "{QUESTION}"', "a question typed into the field")
-                look("the answer under the field", f"{stem}-corona-answer{extension}", args.answer_timeout,
+                run(f'lens --enter "{QUESTION}"', "a question typed into the field")
+                look("the answer under the field", f"{stem}-lens-answer{extension}", args.answer_timeout,
                      rows=(1, LIST_ROWS))
 
     # 6. timeline. vault answers on the bus and a timer takes a snapshot of home every hour. take one,
@@ -1939,7 +1939,7 @@ def main():
         ok("rustic refuses the repository with a wrong password and opens it with the printed one, "
            "and the file's text is in none of its files")
 
-    # 6c. penumbra. `rift run --sandbox` runs a command in bwrap, under landlock rules and a seccomp
+    # 6c. airlock. `rift run --sandbox` runs a command in bwrap, under landlock rules and a seccomp
     # filter. it gets the folder it runs in and the system's programs, nothing else of the owner's: not
     # the rest of home, not /persist, not a disk of the vm. what it writes outside its folder is gone
     # when it ends, and home as a whole goes in only read only
@@ -2035,9 +2035,9 @@ def main():
             fail(f"{command} exited with {status} without saying {words!r}")
     ok("rift run refused /persist, a disk, all of home, root and a command without --sandbox")
 
-    # 6d. the network switch. penumbra keeps one for each app that runs in a sandbox, named after its
+    # 6d. the network switch. airlock keeps one for each app that runs in a sandbox, named after its
     # command or by --name. off cuts the network of the app's sandboxes that run now and of every one it
-    # starts later, loopback included, and on gives it back. what is off stays off when penumbra starts
+    # starts later, loopback included, and on gives it back. what is off stays off when airlock starts
     # again. the vm reaches a server this test runs on the host through qemu's user network, at 10.0.2.2
     served = tempfile.mkdtemp(prefix="rift-net-")
     net_words = "Reached the test server 2718"
@@ -2066,9 +2066,9 @@ def main():
         _, output = run("ip -brief address; nmcli device | cat", "the network of the vm")
         fail(f"the vm does not reach the test server at {url}, curl exited with {status}: "
              f"{without_console(output).strip()!r}")
-    status, output = run("systemctl is-active penumbra", "whether penumbra runs")
+    status, output = run("systemctl is-active airlock", "whether airlock runs")
     if status != 0:
-        fail(f"penumbra is not running: {without_console(output).strip()!r}")
+        fail(f"airlock is not running: {without_console(output).strip()!r}")
     status, printed = sandboxed("rift net", "the apps before any is off")
     if status != 0 or "Every app has the network" not in spaced(printed):
         fail(f"rift net exited with {status} before any app was off, or did not say every app has the network")
@@ -2077,7 +2077,7 @@ def main():
                                 "a sandbox that reaches the test server")
     if status != 0 or net_words not in printed:
         fail(f"a sandbox did not reach the test server at {url}, it exited with {status}")
-    ok(f"penumbra runs, no app is off, and a sandbox reaches the test server at {url}")
+    ok(f"airlock runs, no app is off, and a sandbox reaches the test server at {url}")
 
     # a sandbox that goes on running. each time the test tells it to, it fetches and writes down what it got
     steps = ("for step in 1 2 3; do while ! test -e go-$step; do sleep 0.2; done; "
@@ -2105,9 +2105,9 @@ def main():
     if code != 0 or net_words not in got:
         fail(f"the running sandbox did not reach the test server before its network was off, curl exited with {code}")
     # into a pipe systemctl neither pages nor cuts the unit's name to the console's width
-    _, output = run("systemctl --user list-units --full --plain --no-legend 'app-penumbra-fetcher-*' | cat",
+    _, output = run("systemctl --user list-units --full --plain --no-legend 'app-airlock-fetcher-*' | cat",
                     "the running sandbox's scope")
-    units = re.findall(r"app-penumbra-fetcher-\d+\.scope", without_console(output))
+    units = re.findall(r"app-airlock-fetcher-\d+\.scope", without_console(output))
     print(f"\nboot-test: the user manager lists {units}", flush=True)
     if len(units) != 1:
         fail(f"the user manager lists {units} for fetcher, expected the one scope of the running sandbox")
@@ -2117,11 +2117,11 @@ def main():
     status, printed = sandboxed("rift net", "the apps with fetcher off")
     if status != 0 or not re.search(r"^fetcher\s+Off\s+1\s*$", printed, re.M):
         fail(f"rift net does not list fetcher off with one sandbox running: {printed.strip()!r}")
-    _, output = run("sudo nft list table inet penumbra", "penumbra's table")
+    _, output = run("sudo nft list table inet airlock", "airlock's table")
     table = without_console(output)
-    print(f"\nboot-test: sudo nft list table inet penumbra printed:\n{table}", flush=True)
+    print(f"\nboot-test: sudo nft list table inet airlock printed:\n{table}", flush=True)
     if units[0] not in table:
-        fail(f"penumbra's table does not hold {units[0]}")
+        fail(f"airlock's table does not hold {units[0]}")
     cut, got = fetched(2)
     if cut == 0 or net_words in got:
         fail("the running sandbox reached the test server after its network was turned off")
@@ -2145,55 +2145,55 @@ def main():
     if status != 0 or net_words not in printed:
         fail(f"a sandbox of curl did not reach the test server while fetcher's network was off, it exited with {status}")
     if args.models:
-        # aura's local api on 127.0.0.1. a sandbox without the network has no loopback either
+        # quasar's local api on 127.0.0.1. a sandbox without the network has no loopback either
         loopback = "curl -s -o /dev/null -m 4 -w 'code=%{http_code}' http://127.0.0.1:11434/v1/models"
         codes = []
         for app in ("fetcher", "curl"):
             _, printed = sandboxed(f"rift run --sandbox --folder {fetcher} --name {app} {loopback}",
-                                   f"aura's local api from a sandbox of {app}")
+                                   f"quasar's local api from a sandbox of {app}")
             found = re.search(r"code=(\d{3})", printed)
             codes.append(found.group(1) if found else None)
         if codes[0] != "000" or codes[1] in (None, "000"):
-            fail(f"aura's local api answered a sandbox of fetcher with {codes[0]} and one of curl with {codes[1]}, "
+            fail(f"quasar's local api answered a sandbox of fetcher with {codes[0]} and one of curl with {codes[1]}, "
                  "expected no answer and an answer")
     ok("a new sandbox of fetcher started without the network while one of curl reached the test server"
-       + (", and only curl's reached aura's local api" if args.models else ""))
+       + (", and only curl's reached quasar's local api" if args.models else ""))
 
-    # aura is not an app of the switch. its unit keeps it off the network, which holds for anything in its cgroup
-    status, _ = run("systemctl is-active aura", "whether aura runs")
+    # quasar is not an app of the switch. its unit keeps it off the network, which holds for anything in its cgroup
+    status, _ = run("systemctl is-active quasar", "whether quasar runs")
     if status == 0:
-        status, printed = sandboxed(f"sudo sh -c 'echo $$ > /sys/fs/cgroup/system.slice/aura.service/cgroup.procs; "
-                                    f"exec {fetch}'", "the test server from aura's cgroup")
+        status, printed = sandboxed(f"sudo sh -c 'echo $$ > /sys/fs/cgroup/system.slice/quasar.service/cgroup.procs; "
+                                    f"exec {fetch}'", "the test server from quasar's cgroup")
         if status == 0 or net_words in printed:
-            fail("a process in aura's cgroup reached the test server")
-        ok(f"a process in aura's cgroup does not reach the test server, curl exited with {status}")
+            fail("a process in quasar's cgroup reached the test server")
+        ok(f"a process in quasar's cgroup does not reach the test server, curl exited with {status}")
 
-    # what is off stays off when penumbra starts again
-    status, output = run("sudo systemctl restart penumbra; and systemctl is-active penumbra", "restarting penumbra")
+    # what is off stays off when airlock starts again
+    status, output = run("sudo systemctl restart airlock; and systemctl is-active airlock", "restarting airlock")
     if status != 0:
-        fail(f"penumbra did not start again: {without_console(output).strip()!r}")
-    _, output = run("sudo cat /var/lib/rift/penumbra/network-off", "the apps penumbra keeps off")
+        fail(f"airlock did not start again: {without_console(output).strip()!r}")
+    _, output = run("sudo cat /var/lib/rift/airlock/network-off", "the apps airlock keeps off")
     if not said(without_console(output), "fetcher"):
-        fail(f"penumbra's file does not hold fetcher: {without_console(output).strip()!r}")
-    status, printed = sandboxed("rift net", "the apps after penumbra started again")
+        fail(f"airlock's file does not hold fetcher: {without_console(output).strip()!r}")
+    status, printed = sandboxed("rift net", "the apps after airlock started again")
     if status != 0 or not re.search(r"^fetcher\s+Off\s+\d+\s*$", printed, re.M):
-        fail(f"rift net does not list fetcher off after penumbra started again: {printed.strip()!r}")
+        fail(f"rift net does not list fetcher off after airlock started again: {printed.strip()!r}")
     status, printed = sandboxed(f"rift run --sandbox --folder {fetcher} --name fetcher {fetch}",
-                                "a sandbox of fetcher after penumbra started again")
+                                "a sandbox of fetcher after airlock started again")
     if status == 0 or net_words in printed:
-        fail(f"a sandbox of fetcher reached the test server after penumbra started again, it exited with {status}")
-    ok("fetcher's network stayed off when penumbra started again")
+        fail(f"a sandbox of fetcher reached the test server after airlock started again, it exited with {status}")
+    ok("fetcher's network stayed off when airlock started again")
 
     # what the switch refuses
     for command, words, codes in (("rift net off 'no/such'", "cannot be the name of an app.", (2,)),
                                   (f"rift run --sandbox --folder {fetcher} --name 'a b' true",
                                    "cannot be the name of an app.", (2,)),
-                                  ("penumbra start -- true", "is not in one. Nothing was run.", (126,))):
+                                  ("airlock start -- true", "is not in one. Nothing was run.", (126,))):
         status, printed = sandboxed(command, f"what {command} refuses")
         if status not in codes or words not in spaced(printed):
             fail(f"{command} exited with {status} without saying {words!r}")
-    status, printed = sandboxed("sudo -u nobody busctl call dev.rift.Penumbra /dev/rift/Penumbra "
-                                "dev.rift.Penumbra SetNetwork sb fetcher true", "the switch turned by nobody")
+    status, printed = sandboxed("sudo -u nobody busctl call dev.rift.Airlock /dev/rift/Airlock "
+                                "dev.rift.Airlock SetNetwork sb fetcher true", "the switch turned by nobody")
     _, listed = sandboxed("rift net", "the apps after nobody tried the switch")
     if status == 0 or not re.search(r"^fetcher\s+Off\s+\d+\s*$", listed, re.M):
         fail(f"nobody turned fetcher's network on, busctl exited with {status}")
@@ -2203,7 +2203,7 @@ def main():
     if status != 0 or on_status != 0 or net_words not in printed:
         fail(f"fetcher did not reach the test server after rift net on, which exited with {status}")
     server.shutdown()
-    ok("rift net refused a name that is not an app's, penumbra refused a start outside a sandbox's scope, "
+    ok("rift net refused a name that is not an app's, airlock refused a start outside a sandbox's scope, "
        "nobody could not turn the switch, and fetcher's network came back")
 
     # 6e. flatpak with portals. the test's own runtime and app, two bundles served from the host, go into
@@ -2240,8 +2240,8 @@ def main():
         if status != 0 or not exported:
             fail(f"flatpak document-export exited with {status}: {without_console(output).strip()!r}")
         document = f"/run/flatpak/doc/{exported.group(1)}/private.txt"
-        # xdg-desktop-portal starts only in a graphical session. umbra's on tty1 is the owner's too
-        status, output = run("systemctl --user is-active graphical-session.target", "whether umbra's session is up")
+        # xdg-desktop-portal starts only in a graphical session. horizon's on tty1 is the owner's too
+        status, output = run("systemctl --user is-active graphical-session.target", "whether horizon's session is up")
         if status != 0:
             fail("graphical-session.target is not active in the owner's user manager, so the desktop portal cannot "
                  f"start: {without_console(output).strip()!r}")

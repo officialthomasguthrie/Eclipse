@@ -1,5 +1,5 @@
 # the apps every image has next to the shell: firefox, zed and podman here, helix, zellij and fish
-# in base.nix, ghostty with umbra. none of them reports home or asks for an account
+# in base.nix, ghostty with horizon. none of them reports home or asks for an account
 { pkgs, ... }:
 let
   # zed only reads settings from the owner's home, so they are written there once, when there is

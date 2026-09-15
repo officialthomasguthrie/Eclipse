@@ -19,7 +19,7 @@ in
   networking.nftables.enable = true;
   networking.firewall.enable = true;
 
-  time.timeZone = lib.mkDefault "UTC"; # syzygy and first boot set the real one
+  time.timeZone = lib.mkDefault "UTC"; # orbit and first boot set the real one
   i18n.defaultLocale = "en_US.UTF-8";
 
   services.pipewire = {
@@ -32,7 +32,7 @@ in
 
   # its greeting is in identity.nix
   programs.fish.enable = true;
-  documentation.man.enable = true; # aura indexes man pages offline
+  documentation.man.enable = true; # quasar indexes man pages offline
 
   # dev account until first boot setup replaces it with the real owner
   users.mutableUsers = false;
@@ -52,7 +52,7 @@ in
   security.sudo.wheelNeedsPassword = false;
 
   environment.systemPackages = with pkgs; [
-    riftWorkspace # aurad, syzygy, corona, rift, ...
+    riftWorkspace # quasard, orbit, lens, rift, ...
     helix
     zellij
     nushell

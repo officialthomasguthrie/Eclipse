@@ -1,5 +1,5 @@
 //! `rift ai index` and `rift ai search`: search by meaning in home. The index is the owner's
-//! own file in their cache folder, which nobody else reads; Aura only turns text into vectors and
+//! own file in their cache folder, which nobody else reads; Quasar only turns text into vectors and
 //! never sees a file.
 
 use std::env;
@@ -12,7 +12,7 @@ use std::process::ExitCode;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use librift::aura::{self, Client};
+use librift::quasar::{self, Client};
 use librift::search::{self, Hit, Index, Kind};
 
 use crate::text;
@@ -111,7 +111,7 @@ fn find(words: &str) -> Result<Vec<Hit>, String> {
         }
         Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
     };
-    let status = aura::status()?;
+    let status = quasar::status()?;
     match status.embedding_state.as_str() {
         "ready" => {}
         "loading" => {
@@ -121,14 +121,14 @@ fn find(words: &str) -> Result<Vec<Hit>, String> {
     }
     if status.embedding_model != index.model {
         return Err(format!(
-            "The index was made with {}, and Aura runs {}. Run rift ai index to make it again.",
+            "The index was made with {}, and Quasar runs {}. Run rift ai index to make it again.",
             index.model, status.embedding_model
         ));
     }
     let vectors = Client::connect()?.embed(Kind::Query.name(), &[words.to_string()])?;
     let vector = vectors
         .first()
-        .ok_or("Aura sent no vector for the words.")?;
+        .ok_or("Quasar sent no vector for the words.")?;
     let hits = search::rank(&index, &search::normalized(vector), RESULTS);
     if hits.is_empty() {
         return Err("Nothing in your home folder is indexed yet.".into());
@@ -151,7 +151,7 @@ fn index_path(home: &Path) -> PathBuf {
 fn ready_model() -> Result<String, String> {
     let started = Instant::now();
     loop {
-        let status = aura::status()?;
+        let status = quasar::status()?;
         match status.embedding_state.as_str() {
             "ready" => return Ok(status.embedding_model),
             "loading" if started.elapsed() < LOAD_TIMEOUT => thread::sleep(LOOK_EVERY),

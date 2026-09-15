@@ -1,15 +1,15 @@
-//! `rift host`: what Syzygy remembers about this machine, one row per setting, or one value by
-//! itself. Changing a setting needs a method on Syzygy's side of the bus, which does not exist yet.
+//! `rift host`: what Orbit remembers about this machine, one row per setting, or one value by
+//! itself. Changing a setting needs a method on Orbit's side of the bus, which does not exist yet.
 
 use std::process::ExitCode;
 
-use librift::syzygy::{self, Host, Output};
+use librift::orbit::{self, Host, Output};
 
 use crate::text;
 
 const USAGE: &str = "Usage: rift host [class | tier]";
 
-const HELP: &str = "Shows what Syzygy remembers about this machine. class prints the host class \
+const HELP: &str = "Shows what Orbit remembers about this machine. class prints the host class \
 (owned, trusted or borrowed) by itself, and tier the AI tier.";
 
 pub fn run(args: &[String]) -> ExitCode {
@@ -22,7 +22,7 @@ pub fn run(args: &[String]) -> ExitCode {
         [arg] if field(arg).is_some() => field(arg),
         [arg, rest @ ..] => return text::unknown("host", rest.first().unwrap_or(arg), USAGE),
     };
-    match syzygy::host() {
+    match orbit::host() {
         Ok(host) => {
             match one {
                 Some(value) => println!("{}", value(host)),

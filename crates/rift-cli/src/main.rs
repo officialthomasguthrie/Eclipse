@@ -1,5 +1,5 @@
 //! rift: the CLI. `host`, `ai`, `doctor`, `snapshot`, `backup` and `net` ask the same D-Bus
-//! services Corona uses, `clone` runs Vault as root, and `run --sandbox` runs Penumbra. The other
+//! services Lens uses, `clone` runs Vault as root, and `run --sandbox` runs Airlock. The other
 //! commands are only a line in the help so far.
 
 mod ai;
@@ -42,15 +42,15 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "host",
-        "Show what Syzygy remembers about this machine",
+        "Show what Orbit remembers about this machine",
         "Phase 1",
     ),
     (
         "ai",
-        "Ask Aura a question, or search home by meaning",
+        "Ask Quasar a question, or search home by meaning",
         "Phase 1",
     ),
-    ("run", "Run a command inside a Penumbra sandbox", "Phase 2"),
+    ("run", "Run a command inside a Airlock sandbox", "Phase 2"),
     (
         "net",
         "Turn the network off or on for an app in a sandbox",

@@ -16,8 +16,8 @@ else
       LICENSE*|*/LICENSE*|Cargo.lock|flake.lock|tools/design-lint.sh) continue ;;
       # the compositor is forked third party code. its comments and shaders are not a surface
       # anyone sees, only its readme is ours
-      crates/umbra/README.md) ;;
-      crates/umbra/*) continue ;;
+      crates/horizon/README.md) ;;
+      crates/horizon/*) continue ;;
     esac
     files+=("$f")
   done < <(git ls-files)

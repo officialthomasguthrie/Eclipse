@@ -1,16 +1,16 @@
-//! `rift net`: the network switch Penumbra keeps for each app that runs in a sandbox. Lists the
+//! `rift net`: the network switch Airlock keeps for each app that runs in a sandbox. Lists the
 //! apps that are off or running, and turns an app's network off or on.
 
 use std::fmt::Write as _;
 use std::process::ExitCode;
 
-use librift::penumbra::{self, App};
+use librift::airlock::{self, App};
 
 use crate::text;
 
 const USAGE: &str = "Usage: rift net [list]\n       rift net off <app>\n       rift net on <app>";
 
-const HELP: &str = "Penumbra keeps a network switch for each app that runs in a sandbox. off \
+const HELP: &str = "Airlock keeps a network switch for each app that runs in a sandbox. off \
 takes the network away from an app, at once in the sandboxes it runs in now and in every one it \
 starts later, until on gives it back. An app is named after its command, or by --name when rift \
 run --sandbox starts it. list shows the apps whose network is off and the apps that run in a \
@@ -36,7 +36,7 @@ pub fn run(args: &[String]) -> ExitCode {
 }
 
 fn list() -> ExitCode {
-    match penumbra::apps() {
+    match airlock::apps() {
         Ok(apps) if apps.is_empty() => {
             println!("Every app has the network, and none runs in a sandbox now.");
             ExitCode::SUCCESS
@@ -53,11 +53,11 @@ fn list() -> ExitCode {
 }
 
 fn set(app: &str, on: bool) -> ExitCode {
-    if let Some(why) = penumbra::name_problem(app) {
+    if let Some(why) = airlock::name_problem(app) {
         eprintln!("{why}");
         return ExitCode::from(2);
     }
-    match penumbra::set_network(app, on) {
+    match airlock::set_network(app, on) {
         Ok(running) => {
             println!("{}", switched(app, on, running));
             ExitCode::SUCCESS

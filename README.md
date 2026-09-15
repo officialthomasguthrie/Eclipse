@@ -1,6 +1,6 @@
 <div align="center">
 
-<img alt="Rift logo" src="nix/totality/logo/rift-mark.png" width="260">
+<img alt="Rift logo" src="nix/liftoff/logo/rift-mark.png" width="260">
 
 # Rift
 
@@ -63,21 +63,21 @@ The system is assembled from nixpkgs with Nix, so each image is fully described 
 
 ### Desktop
 
-- Umbra, a Wayland compositor derived from niri, arranges windows as columns on a horizontally scrolling strip for each display.
-- Corona, the desktop shell, provides the top bar and a command field that launches applications, runs system commands for Wi-Fi, displays, volume and power, evaluates Nushell pipelines, and passes requests written in plain language to the local assistant.
+- Horizon, a Wayland compositor derived from niri, arranges windows as columns on a horizontally scrolling strip for each display.
+- Lens, the desktop shell, provides the top bar and a command field that launches applications, runs system commands for Wi-Fi, displays, volume and power, evaluates Nushell pipelines, and passes requests written in plain language to the local assistant.
 - A drop-down terminal and a lock screen are built into the compositor.
 - Firefox, Ghostty, Zed, Helix, zellij, fish and Podman are included in the image.
 - Flatpak is integrated with xdg-desktop-portal for applications installed from Flathub.
 
 ### Per-machine configuration
 
-- Syzygy identifies each host from its DMI and PCI identifiers and stores a profile for it on the encrypted volume. A machine that has been seen before is configured from its profile.
+- Orbit identifies each host from its DMI and PCI identifiers and stores a profile for it on the encrypted volume. A machine that has been seen before is configured from its profile.
 - On a machine it has not seen, it derives display scaling from the physical size reported by the monitor, selects a graphics path, and chooses an AI model tier suited to the available memory.
 - Every host is classed as owned, trusted or borrowed. Internal disks are never mounted automatically.
 
 ### Local AI
 
-- Aura runs language models with llama.cpp on the host itself, using the GPU where one is usable and the CPU otherwise. No account, network connection or remote service is involved.
+- Quasar runs language models with llama.cpp on the host itself, using the GPU where one is usable and the CPU otherwise. No account, network connection or remote service is involved.
 - Models from the Qwen3 family, licensed under Apache-2.0, are selected by tier according to host memory. Each model is declared with its checksum in `models/manifest.toml`, and weights are stored on the encrypted volume.
 - An OpenAI-compatible API on `127.0.0.1:11434` makes the models available to local programs. Requests that originate from web pages are refused.
 - A request made through the shell returns either an answer or a proposed action, and no action runs until it is confirmed.
@@ -97,12 +97,12 @@ Rift contains no telemetry, requires no account, and depends on no online servic
 
 | Component | Function |
 |---|---|
-| Totality | System image, boot process and updates |
-| Umbra | Wayland compositor |
-| Corona | Desktop shell and command field |
-| Aura | Local AI service and API |
-| Syzygy | Host detection and per-machine profiles |
-| Penumbra | Application sandboxing and network control |
+| Liftoff | System image, boot process and updates |
+| Horizon | Wayland compositor |
+| Lens | Desktop shell and command field |
+| Quasar | Local AI service and API |
+| Orbit | Host detection and per-machine profiles |
+| Airlock | Application sandboxing and network control |
 | Vault | Snapshots, backup and cloning |
 | rift-flash | Drive writer for Windows, macOS and Linux |
 | librift | Shared library used by the tools above |
@@ -189,6 +189,6 @@ Bugs and feature requests are tracked in [GitHub issues](https://github.com/offi
 
 ## License
 
-Rift is licensed under the [GNU General Public License, version 3 or later](LICENSE). librift is licensed under the [Apache License 2.0](LICENSE-APACHE) so that other software can use it. Umbra is derived from [niri](https://github.com/niri-wm/niri) by Ivan Molodetskikh and the niri contributors. Third-party software included in the image remains under its own license.
+Rift is licensed under the [GNU General Public License, version 3 or later](LICENSE). librift is licensed under the [Apache License 2.0](LICENSE-APACHE) so that other software can use it. Horizon is derived from [niri](https://github.com/niri-wm/niri) by Ivan Molodetskikh and the niri contributors. Third-party software included in the image remains under its own license.
 
 Copyright 2026 Thomas Guthrie.

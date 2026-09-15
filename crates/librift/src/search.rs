@@ -1,6 +1,6 @@
 //! Search by meaning, from the owner's side. An update walks home, cuts each text file into parts,
-//! gets a vector for each part from Aura and keeps them all in one index; a search gets a vector
-//! for the words and ranks files by their closest part. Aura turns text into vectors and never
+//! gets a vector for each part from Quasar and keeps them all in one index; a search gets a vector
+//! for the words and ranks files by their closest part. Quasar turns text into vectors and never
 //! reads home, whoever runs this does.
 //!
 //! The index is one flat file, little endian: [`HEADER`], the model's id, the number of dimensions,
@@ -27,7 +27,7 @@ pub const LARGEST_FILE: u64 = 1 << 20;
 pub const LONGEST_PART: usize = 1500;
 /// A part this long ends at the next blank line.
 pub const PARAGRAPH: usize = 500;
-/// How many parts go to Aura in one call.
+/// How many parts go to Quasar in one call.
 pub const PARTS_PER_CALL: usize = 16;
 /// The first bytes of an index.
 pub const HEADER: &[u8] = b"rift search index 1\n";
@@ -429,7 +429,7 @@ fn read_file(full: &Path, found: Found, embed: &mut Embedder<'_>) -> Result<File
         let vectors = embed(Kind::Document, &texts)?;
         if vectors.len() != batch.len() {
             return Err(format!(
-                "Aura sent {} vectors for {} texts.",
+                "Quasar sent {} vectors for {} texts.",
                 vectors.len(),
                 batch.len()
             ));
@@ -731,9 +731,9 @@ mod tests {
         let first = update(&home.0, None, "model", &mut working);
         home.write("b.txt", b"bike bike");
         home.write("c.txt", b"soup");
-        let mut broken = |_: Kind, _: &[String]| Err("Aura is not running.".to_string());
+        let mut broken = |_: Kind, _: &[String]| Err("Quasar is not running.".to_string());
         let second = update(&home.0, Some(first.index), "model", &mut broken);
-        assert_eq!(second.error.as_deref(), Some("Aura is not running."));
+        assert_eq!(second.error.as_deref(), Some("Quasar is not running."));
         assert_eq!(second.read, 0);
         let paths: Vec<&str> = second
             .index

@@ -9,7 +9,7 @@ authors.workspace = true
 license = "Apache-2.0"
 
 [features]
-# the client side of the services on the system bus, for corona and the rift command. off by
+# the client side of the services on the system bus, for lens and the rift command. off by
 # default, so rift-flash builds for macos and windows without it
 bus = ["dep:zbus"]
 # drives: what lsblk, sfdisk, diskutil and Get-Disk print, the partition tables and the guard, for

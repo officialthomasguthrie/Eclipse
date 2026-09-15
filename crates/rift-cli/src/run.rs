@@ -1,5 +1,5 @@
-//! `rift run --sandbox`: a command in a Penumbra sandbox. Penumbra checks what the sandbox may
-//! see, starts it in a scope named for its app and builds it, so this runs `penumbra run` in its
+//! `rift run --sandbox`: a command in a Airlock sandbox. Airlock checks what the sandbox may
+//! see, starts it in a scope named for its app and builds it, so this runs `airlock run` in its
 //! place with the other arguments.
 
 use std::os::unix::process::CommandExt;
@@ -9,10 +9,10 @@ const USAGE: &str = "Usage: rift run --sandbox [--name <app>] [--folder <folder>
 [--read <path>]... [--write <path>]... <command> [<argument>]...";
 
 pub fn run(args: &[String]) -> ExitCode {
-    match penumbra_args(args) {
+    match airlock_args(args) {
         Ok(forwarded) => {
-            let error = Command::new("penumbra").args(&forwarded).exec();
-            eprintln!("Could not run penumbra: {error}");
+            let error = Command::new("airlock").args(&forwarded).exec();
+            eprintln!("Could not run airlock: {error}");
             ExitCode::FAILURE
         }
         Err(why) => {
@@ -22,8 +22,8 @@ pub fn run(args: &[String]) -> ExitCode {
     }
 }
 
-/// The arguments `penumbra run` gets: all of them but --sandbox, which comes before the command.
-fn penumbra_args(args: &[String]) -> Result<Vec<String>, String> {
+/// The arguments `airlock run` gets: all of them but --sandbox, which comes before the command.
+fn airlock_args(args: &[String]) -> Result<Vec<String>, String> {
     let mut forwarded = vec!["run".to_string()];
     let mut sandbox = false;
     let mut rest = args.iter();
@@ -58,13 +58,13 @@ mod tests {
     }
 
     #[test]
-    fn penumbra_gets_everything_but_sandbox() {
+    fn airlock_gets_everything_but_sandbox() {
         assert_eq!(
-            penumbra_args(&args(&["--sandbox", "make", "-j", "4"])),
+            airlock_args(&args(&["--sandbox", "make", "-j", "4"])),
             Ok(args(&["run", "make", "-j", "4"]))
         );
         assert_eq!(
-            penumbra_args(&args(&[
+            airlock_args(&args(&[
                 "--read",
                 "/tmp/x",
                 "--sandbox",
@@ -74,20 +74,20 @@ mod tests {
             Ok(args(&["run", "--read", "/tmp/x", "cat", "--sandbox"]))
         );
         assert_eq!(
-            penumbra_args(&args(&["--sandbox", "--name", "--sandbox", "curl"])),
+            airlock_args(&args(&["--sandbox", "--name", "--sandbox", "curl"])),
             Ok(args(&["run", "--name", "--sandbox", "curl"]))
         );
         assert_eq!(
-            penumbra_args(&args(&["--help"])),
+            airlock_args(&args(&["--help"])),
             Ok(args(&["run", "--help"]))
         );
     }
 
     #[test]
     fn without_sandbox_nothing_runs() {
-        assert!(penumbra_args(&args(&["make"])).is_err());
-        assert!(penumbra_args(&args(&[])).is_err());
-        assert!(penumbra_args(&args(&["--read", "--sandbox", "ls"])).is_err());
-        assert!(penumbra_args(&args(&["--name", "--sandbox", "ls"])).is_err());
+        assert!(airlock_args(&args(&["make"])).is_err());
+        assert!(airlock_args(&args(&[])).is_err());
+        assert!(airlock_args(&args(&["--read", "--sandbox", "ls"])).is_err());
+        assert!(airlock_args(&args(&["--name", "--sandbox", "ls"])).is_err());
     }
 }

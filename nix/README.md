@@ -4,7 +4,7 @@ kernel/     Kernel config.
 image/      Partition layout, verity store, persist mounts. ab-sysupdate.nix is the A/B layout, not imported yet.
 modules/    One module per component, rift.<name>.enable.
 profiles/   base.nix for every image, phase0.nix for the console-only build.
-totality/   Boot splash. The PNGs come from tools/gen-totality-assets.py.
+liftoff/   Boot splash. The PNGs come from tools/gen-liftoff-assets.py.
 
 test-flatpak.nix is a flatpak runtime and app of our own, as bundles, for the boot test.
 

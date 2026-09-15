@@ -20,6 +20,6 @@ Boots: yes / no. Power-on to shell: NN s.
 
 ## What didn't
 
-## Notes for Syzygy
+## Notes for Orbit
 
 Quirks worth remembering for this host (keyboard, touchpad, DPI, audio, suspend).

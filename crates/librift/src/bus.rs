@@ -1,6 +1,6 @@
 //! The system bus from a client's side. [`reason`] turns an error reply into the sentence a person
 //! reads. With the `bus` feature this module also opens the connection and the proxies that
-//! [`crate::aura`] and [`crate::syzygy`] ask through.
+//! [`crate::quasar`] and [`crate::orbit`] ask through.
 
 #[cfg(feature = "bus")]
 use std::time::Duration;
@@ -88,31 +88,31 @@ mod tests {
     fn errors_on_the_bus_read_as_sentences() {
         assert_eq!(
             reason(
-                Component::Aura,
+                Component::Quasar,
                 "org.freedesktop.DBus.Error.ServiceUnknown",
                 None
             ),
-            "Aura is not running."
+            "Quasar is not running."
         );
         assert_eq!(
             reason(
-                Component::Syzygy,
+                Component::Orbit,
                 "org.freedesktop.DBus.Error.NameHasNoOwner",
                 Some("The name is not activatable")
             ),
-            "Syzygy is not running."
+            "Orbit is not running."
         );
         assert_eq!(
             reason(
-                Component::Aura,
+                Component::Quasar,
                 "org.freedesktop.DBus.Error.NoReply",
                 Some("Did not receive a reply")
             ),
-            "Aura took too long to answer."
+            "Quasar took too long to answer."
         );
         assert_eq!(
             reason(
-                Component::Aura,
+                Component::Quasar,
                 "org.freedesktop.DBus.Error.Failed",
                 Some("The model is still loading. Try again in a moment.")
             ),
@@ -120,11 +120,11 @@ mod tests {
         );
         assert_eq!(
             reason(
-                Component::Aura,
+                Component::Quasar,
                 "org.freedesktop.DBus.Error.Failed",
                 Some(" ")
             ),
-            "Aura could not answer."
+            "Quasar could not answer."
         );
     }
 }

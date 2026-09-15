@@ -1,4 +1,4 @@
-# totality: the read-only, verity-checked system image
+# liftoff: the read-only, verity-checked system image
 #
 # the image is slot a of the a/b layout: the esp with systemd-boot and a uki that counts its boots,
 # the store's verity partition and the store. writing it to a drive adds slot b and persist behind it
